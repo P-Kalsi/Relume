@@ -15,9 +15,10 @@ Coordinate convention (used by both the resampler and the point mapping):
     u = (j + 0.5) / sx - 0.5, which is the same mapping inverted, clamped to
     [0, W - 1] (edge pixels repeat).
 
-Status: the letterbox policy is PROPOSED, pending the comparison against
-direct resizing and the official upstream preprocessing
-(scripts/compare_preprocessing.py, docs/model.md).
+Status: the letterbox policy is PROVISIONAL. On the pinned demo images,
+direct resizing ("stretch") agreed more closely with the official upstream
+preprocessing (docs/preprocessing_comparison.json); the choice will be revisited
+with real webcam frames containing faces before Phase 3.
 """
 
 from __future__ import annotations
@@ -159,7 +160,9 @@ def depth_to_source(depth: np.ndarray, transform: ResizeTransform) -> np.ndarray
 def contract_description() -> dict:
     """Machine-readable summary of the contract, stored in the model manifest."""
     return {
-        "status": "proposed - pending comparison against direct resize and upstream preprocessing",
+        "status": "provisional - letterbox kept for Phase 1; before Phase 3, compare letterbox vs stretch "
+                  "on local webcam frames with faces, hair, shoulders and varied lighting "
+                  "(see docs/preprocessing_comparison.json)",
         "input": "HxWx3 RGB uint8 (callers convert BGR/BGRA/NV12 to RGB; alpha dropped)",
         "scale": "float32 value / 255 -> [0, 1]",
         "aspect_policy": "letterbox: s = 448 / max(W, H); new = max(1, round(dim * s)) "

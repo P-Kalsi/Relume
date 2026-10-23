@@ -20,6 +20,27 @@ scripts/bootstrap_deps.sh dawn     # only Dawn; DAWN_JOBS=4 by default
 The Dawn build compiles about 940 files and is the slow step. Re-running the
 script skips anything already installed.
 
+## 1b. Model tooling: Python environment, checkpoint and ONNX export (once)
+
+```sh
+scripts/setup_python.sh                        # .venv (python3.14, else python3.12), pinned packages,
+                                               # upstream source, checkpoint and demo images (SHA-256 checked),
+                                               # import smoke test
+RELUME_PYTHON=python3.12 scripts/setup_python.sh   # force an interpreter
+.venv/bin/python scripts/export.py             # -> models/depth_anything_v2_small_448.onnx + manifest
+.venv/bin/python scripts/check_parity.py       # PyTorch vs ONNX Runtime CPU; exits non-zero on failure
+.venv/bin/python scripts/compare_preprocessing.py   # informational letterbox/stretch/upstream comparison
+.venv/bin/python -m pytest tests/python -v
+```
+
+Downloads: about 100 MB of checkpoint, 2 MB of demo images, and Python wheels
+(torch is the largest). The exported ONNX file is about 100 MB. None of these
+are committed.
+
+**Fresh-clone check:** after the steps above, `git status` must show the
+manifest unchanged except for its `environment` block, and `check_parity.py`
+must pass.
+
 ## 2. Configure, build and test
 
 ```sh
@@ -35,6 +56,9 @@ CTest runs:
   is missing or the CoreML EP cannot be registered.
 - `dawn_offscreen_quad`: renders the textured quad offscreen and checks the
   pixels.
+- `python_preprocess` and `python_model_artifacts`: the pytest suites. They are registered
+  only when `.venv` exists (`RELUME_PYTHON_TESTS`). The artifact suite
+  fails, with instructions, if `scripts/export.py` has not been run.
 
 ## 3. Manual probes
 

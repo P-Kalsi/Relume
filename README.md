@@ -15,7 +15,10 @@ Relume uses monocular depth estimation and GPU shaders to apply adjustable virtu
 
 ## Current status
 
-Phase 0 — Environment and feasibility probes (Dawn textured quad, ONNX Runtime provider probe, AVFoundation camera probe). No application features yet.
+- **Phase 0 (done):** environment and feasibility probes for the Dawn textured quad, the ONNX Runtime provider list and the AVFoundation camera.
+- **Phase 1 (done):** reproducible Depth Anything V2 Small → fixed 448×448 ONNX export, with a manifest, a preprocessing contract and PyTorch↔ONNX parity tests. See `docs/model.md`.
+
+There are no application features yet.
 
 ## Development platform
 

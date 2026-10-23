@@ -73,3 +73,49 @@ the development machine unless stated otherwise.
 - **GLFW warnings under ASan.** GLFW 3.4 emits `sprintf` deprecation warnings in the `asan` preset. They are third-party and harmless.
 - **Possible future `.gitignore` conflict.** `.gitignore` ignores all of `models/`, but the PRD expects a tracked `models/README.md`. This needs adjusting in Phase 1.
 - **Disk use.** Dawn source with its fetched dependencies takes about 1.3 GB under `third_party/`.
+
+## Phase 1 — Model reproducibility (2026-10-23)
+
+Details and numbers: `docs/model.md`.
+
+### Decisions
+
+- **Python 3.14 in an isolated `.venv`.** Every pinned package publishes
+  cp314 macOS arm64 wheels, and the install and import smoke test passed. Python
+  3.12 remains a supported fallback (`RELUME_PYTHON=python3.12`). The system
+  Python is not modified.
+- **Downloads use `curl`, not Python `urllib`.** The python.org build of
+  Python 3.14 has no CA certificates configured, so its HTTPS requests failed.
+  `curl` uses the macOS trust store, and every file is still SHA-256 verified in
+  Python. The system Python's certificate setup was left unchanged.
+- **The upstream Depth-Anything-V2 code is fetched, not vendored.** It is pinned
+  by commit in `third_party/src`. This keeps the official reference untouched
+  and out of Relume's history.
+- **Exporter: dynamo, opset 18, single file.** `external_data=False` keeps the
+  roughly 100 MB weights inside one `.onnx` file. torch 2.14's default would
+  write them to a separate file. Export is deterministic: every re-export was
+  byte-identical.
+- **Preprocessing is pure NumPy** with an explicitly specified bilinear
+  resize. That makes it exactly reproducible in C++; OpenCV's resize is not
+  formally specified. Golden vectors pin the contract.
+- **Letterbox is provisional.** On the pinned demo images, stretch agreed more
+  closely with upstream preprocessing (9 of 10 images). The decision is
+  deferred until a comparison on local webcam frames with faces, before
+  Phase 3.
+- **Tolerances.** Hard ceilings were fixed before any measurement (relative
+  max 1e-3, mean ÷ range 1e-4). Working tolerances were calibrated once at 10×
+  the observed errors, committed, and are never raised automatically.
+- **Depth direction.** Larger values are nearer. This was confirmed visually by
+  the developer on 5 demo images.
+
+### Known issues and limitations
+
+- **ONNX Runtime CPU latency is about 328 ms (p50) per 448×448 inference on
+  the M2.** That is about 3 FPS, far below the 30 FPS goal. CoreML is
+  unmeasured (Phase 3).
+- **The model outputs exact zeros in far regions** because of the in-graph
+  ReLU, so later depth normalization must handle large flat areas.
+- **No upstream demo image is webcam-like.** None has a face, so the
+  preprocessing comparison needs real local frames.
+- **The `.gitignore` issue from Phase 0 is fixed.** `models/` now ignores
+  everything except `README.md` and `*.manifest.json`.

@@ -168,7 +168,9 @@ def main() -> int:
             "dtype": "float32",
             "meaning": "relative, disparity-like depth; no metric units; scale and offset vary per image",
             "range": "non-negative (in-graph ReLU); no fixed upper bound",
-            "direction": "larger_is_nearer (unverified - pending visual confirmation)",
+            "direction": "larger_is_nearer",
+            "direction_evidence": "visual check of 5 pinned upstream demo images (demo01/03/07/10/16), "
+                                  "confirmed by the developer on 2026-10-23; not a metric measurement",
             "in_graph_postprocessing": "ReLU only",
             "postprocessing_outside_graph": "crop letterbox padding, then bilinear (half-pixel) resize to source size; "
                                             "display normalization (2nd-98th percentile) for visualization only",
