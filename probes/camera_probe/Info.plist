@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleDevelopmentRegion</key>
+  <string>en</string>
+  <key>CFBundleExecutable</key>
+  <string>RelumeCameraProbe</string>
+  <key>CFBundleIdentifier</key>
+  <string>dev.relume.cameraprobe</string>
+  <key>CFBundleName</key>
+  <string>Relume Camera Probe</string>
+  <key>CFBundlePackageType</key>
+  <string>APPL</string>
+  <key>CFBundleShortVersionString</key>
+  <string>0.0.0</string>
+  <key>CFBundleVersion</key>
+  <string>0</string>
+  <key>LSMinimumSystemVersion</key>
+  <string>14.0</string>
+  <key>LSUIElement</key>
+  <true/>
+  <key>NSCameraUseContinuityCameraDeviceType</key>
+  <true/>
+  <key>NSCameraUsageDescription</key>
+  <string>Relume processes your webcam locally to apply lighting effects. No video leaves this Mac.</string>
+</dict>
+</plist>
