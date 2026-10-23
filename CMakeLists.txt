@@ -37,6 +37,27 @@ endif()
 if(RELUME_BUILD_DAWN_PROBE)
   add_subdirectory(probes/dawn_hello)
 endif()
+# Python model-tooling tests (Phase 1). They need the venv created by
+# scripts/setup_python.sh; without it they are not registered.
+set(RELUME_VENV_PYTHON "${CMAKE_CURRENT_SOURCE_DIR}/.venv/bin/python")
+if(EXISTS "${RELUME_VENV_PYTHON}")
+  set(_relume_python_tests_default ON)
+else()
+  set(_relume_python_tests_default OFF)
+endif()
+option(RELUME_PYTHON_TESTS "Register the Python model-tooling tests with CTest" ${_relume_python_tests_default})
+if(RELUME_PYTHON_TESTS)
+  if(NOT EXISTS "${RELUME_VENV_PYTHON}")
+    message(FATAL_ERROR "RELUME_PYTHON_TESTS=ON but ${RELUME_VENV_PYTHON} is missing; run scripts/setup_python.sh")
+  endif()
+  add_test(NAME python_preprocess
+    COMMAND "${RELUME_VENV_PYTHON}" -m pytest -q -p no:cacheprovider tests/python/test_preprocess.py
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+  set_tests_properties(python_preprocess PROPERTIES TIMEOUT 300)
+else()
+  message(STATUS "Python model tests not registered (run scripts/setup_python.sh to enable)")
+endif()
+
 if(RELUME_BUILD_CAMERA_PROBE)
   if(NOT APPLE)
     message(FATAL_ERROR "The camera probe uses AVFoundation and only builds on macOS")
