@@ -68,6 +68,38 @@ def test_runtime_version_matches_cpp():
     assert ort.__version__ == "1.31.0"
 
 
+@pytest.fixture(scope="module")
+def torch_model():
+    from relume_model.upstream import load_model
+
+    return load_model()
+
+
+@pytest.mark.parametrize("method", ["letterbox", "stretch"])
+@pytest.mark.parametrize("name", sorted(GENERATED))
+def test_parity_with_pytorch(session, torch_model, name, method):
+    """Same tensor into both runtimes; fails above the committed tolerances."""
+    import torch
+
+    from relume_model.tolerances import HARD_CEILINGS, WORKING_TOLERANCES
+
+    assert WORKING_TOLERANCES is not None, "tolerances not calibrated"
+    for key, value in WORKING_TOLERANCES.items():
+        if key in HARD_CEILINGS:
+            assert value <= HARD_CEILINGS[key], f"{key} tolerance above its hard ceiling"
+
+    tensor, _ = preprocess(GENERATED[name](), method)
+    with torch.inference_mode():
+        ref = torch_model(torch.from_numpy(tensor)).numpy().astype(np.float64)
+    out = session.run(["depth"], {"image": tensor})[0].astype(np.float64)
+    assert np.isfinite(ref).all() and np.isfinite(out).all()
+    diff = np.abs(out - ref)
+    value_range = ref.max() - ref.min()
+    assert diff.max() <= WORKING_TOLERANCES["max_abs"]
+    assert diff.max() / value_range <= WORKING_TOLERANCES["rel_max"]
+    assert diff.mean() / value_range <= WORKING_TOLERANCES["mean_abs_over_range"]
+
+
 @pytest.mark.parametrize("name", sorted(GENERATED))
 def test_cpu_inference_output(session, name):
     tensor, _ = preprocess(GENERATED[name]())

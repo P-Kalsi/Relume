@@ -18,4 +18,12 @@ HARD_CEILINGS = {
     "mean_abs_over_range": 1e-4,
 }
 
-WORKING_TOLERANCES = None
+# Calibrated 2026-10-23 from the first run (Apple M2, macOS 14.8.9, torch 2.14.1,
+# onnxruntime 1.31.0; 11 fixtures x 2 methods). Worst observed: max_abs 1.27e-4,
+# rel_max 3.27e-5, mean_abs_over_range 1.41e-6 -> 10x, rounded up to 1 s.f.,
+# capped at the ceilings.
+WORKING_TOLERANCES = {
+    "max_abs": 2e-3,
+    "rel_max": 4e-4,
+    "mean_abs_over_range": 2e-5,
+}
