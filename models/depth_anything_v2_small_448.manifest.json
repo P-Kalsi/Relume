@@ -1,0 +1,142 @@
+{
+  "model": {
+    "name": "Depth-Anything-V2-Small",
+    "license": "Apache-2.0",
+    "upstream_repository": "https://github.com/DepthAnything/Depth-Anything-V2.git",
+    "upstream_commit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+    "huggingface_revision": "03876f8651c73a60fe4c2c48294e09fcb6838fcf",
+    "checkpoint_file": "depth_anything_v2_vits.pth",
+    "checkpoint_sha256": "715fade13be8f229f8a70cc02066f656f2423a59effd0579197bbf57860e1378",
+    "checkpoint_size": 99218434,
+    "config": {
+      "encoder": "vits",
+      "features": 64,
+      "out_channels": [
+        48,
+        96,
+        192,
+        384
+      ]
+    }
+  },
+  "onnx": {
+    "file": "depth_anything_v2_small_448.onnx",
+    "sha256": "8d6615480be624c0d8b27311c7511247e105076c0c5db6b1f6b37829bc9ece1d",
+    "size": 99770048,
+    "export_deterministic": true,
+    "exporter": "torch.onnx.export(dynamo=True, optimize=True, external_data=False)",
+    "opset": 18,
+    "ir_version": 10,
+    "opset_imports": {
+      "ai.onnx": 18
+    },
+    "inputs": [
+      {
+        "name": "image",
+        "dtype": "float",
+        "shape": [
+          1,
+          3,
+          448,
+          448
+        ]
+      }
+    ],
+    "outputs": [
+      {
+        "name": "depth",
+        "dtype": "float",
+        "shape": [
+          1,
+          448,
+          448
+        ]
+      }
+    ],
+    "node_count": 466,
+    "op_histogram": {
+      "Add": 95,
+      "Concat": 2,
+      "Conv": 31,
+      "ConvTranspose": 2,
+      "Div": 12,
+      "Erf": 12,
+      "Gather": 37,
+      "LayerNormalization": 28,
+      "MatMul": 72,
+      "Mul": 60,
+      "Relu": 16,
+      "Reshape": 31,
+      "Resize": 6,
+      "Slice": 5,
+      "Softmax": 12,
+      "Squeeze": 1,
+      "Transpose": 43,
+      "Unsqueeze": 1
+    }
+  },
+  "output_semantics": {
+    "tensor": "depth",
+    "shape": [
+      1,
+      448,
+      448
+    ],
+    "dtype": "float32",
+    "meaning": "relative, disparity-like depth; no metric units; scale and offset vary per image",
+    "range": "non-negative (in-graph ReLU); no fixed upper bound",
+    "direction": "larger_is_nearer (unverified - pending visual confirmation)",
+    "in_graph_postprocessing": "ReLU only",
+    "postprocessing_outside_graph": "crop letterbox padding, then bilinear (half-pixel) resize to source size; display normalization (2nd-98th percentile) for visualization only"
+  },
+  "preprocessing": {
+    "status": "proposed - pending comparison against direct resize and upstream preprocessing",
+    "input": "HxWx3 RGB uint8 (callers convert BGR/BGRA/NV12 to RGB; alpha dropped)",
+    "scale": "float32 value / 255 -> [0, 1]",
+    "aspect_policy": "letterbox: s = 448 / max(W, H); new = max(1, round(dim * s)) (round half to even); pad = (448 - new) // 2, centred",
+    "resize": "bilinear, half-pixel centres, edge clamped; source u = (j + 0.5) * W / new_w - 0.5; separable, horizontal pass then vertical, float32",
+    "pad_value_rgb": [
+      0.48500001430511475,
+      0.4560000002384186,
+      0.4059999883174896
+    ],
+    "normalize": {
+      "mean": [
+        0.48500001430511475,
+        0.4560000002384186,
+        0.4059999883174896
+      ],
+      "std": [
+        0.2290000021457672,
+        0.2240000069141388,
+        0.22499999403953552
+      ],
+      "formula": "(x - mean) / std"
+    },
+    "layout": "NCHW, contiguous, float32, channel order R,G,B",
+    "tensor_shape": [
+      1,
+      3,
+      448,
+      448
+    ],
+    "inverse": "crop [pad_y:pad_y+new_h, pad_x:pad_x+new_w] then the same bilinear resize to src size",
+    "coordinates": "continuous, pixel i centre at i + 0.5; net = src * (new/src) + pad"
+  },
+  "parity": {
+    "hard_ceilings": {
+      "rel_max": 0.001,
+      "mean_abs_over_range": 0.0001
+    },
+    "working_tolerances": null
+  },
+  "environment": {
+    "python": "3.14.7",
+    "torch": "2.14.1",
+    "onnx": "1.23.2",
+    "onnxruntime": "1.31.0",
+    "numpy": "2.5.4",
+    "os": "macOS-14.8.9-arm64-arm-64bit-Mach-O",
+    "machine": "arm64"
+  }
+}

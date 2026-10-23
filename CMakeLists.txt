@@ -53,7 +53,11 @@ if(RELUME_PYTHON_TESTS)
   add_test(NAME python_preprocess
     COMMAND "${RELUME_VENV_PYTHON}" -m pytest -q -p no:cacheprovider tests/python/test_preprocess.py
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
-  set_tests_properties(python_preprocess PROPERTIES TIMEOUT 300)
+  # Fails (with instructions) if scripts/export.py has not been run.
+  add_test(NAME python_model_artifacts
+    COMMAND "${RELUME_VENV_PYTHON}" -m pytest -q -p no:cacheprovider tests/python/test_model_artifacts.py
+    WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+  set_tests_properties(python_preprocess python_model_artifacts PROPERTIES TIMEOUT 300)
 else()
   message(STATUS "Python model tests not registered (run scripts/setup_python.sh to enable)")
 endif()
