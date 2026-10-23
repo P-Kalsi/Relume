@@ -1,0 +1,30 @@
+{
+  "upstream": {
+    "name": "Depth-Anything-V2",
+    "repository": "https://github.com/DepthAnything/Depth-Anything-V2.git",
+    "commit": "a561b849ebae10a6f5ef49e26c83cbbcd36c71bf",
+    "license": "Apache-2.0 (code); Depth-Anything-V2-Small weights Apache-2.0",
+    "destination": "third_party/src/depth_anything_v2"
+  },
+  "checkpoint": {
+    "name": "Depth-Anything-V2-Small (vits)",
+    "url": "https://huggingface.co/depth-anything/Depth-Anything-V2-Small/resolve/03876f8651c73a60fe4c2c48294e09fcb6838fcf/depth_anything_v2_vits.pth",
+    "huggingface_revision": "03876f8651c73a60fe4c2c48294e09fcb6838fcf",
+    "size": 99218434,
+    "sha256": "715fade13be8f229f8a70cc02066f656f2423a59effd0579197bbf57860e1378",
+    "license": "Apache-2.0",
+    "destination": "models/depth_anything_v2_vits.pth"
+  },
+  "demo_images": {
+    "note": "Upstream example images used for local visual validation only. Their redistribution terms are not stated, so they are never committed.",
+    "base_url": "https://raw.githubusercontent.com/DepthAnything/Depth-Anything-V2/a561b849ebae10a6f5ef49e26c83cbbcd36c71bf/assets/examples/",
+    "destination": "third_party/assets/da_v2_examples",
+    "files": {
+      "demo01.jpg": "35ef1bbb63f6540e49aa9b6302b9b938be4fe8b9c08c07c3694b02396b0e87e0",
+      "demo03.jpg": "764dffd4d97bbacd620bc005fa86837018393ccb5ffd1059c2245a3cacff7782",
+      "demo07.jpg": "345bec735adc4c238bf14ddf1d182c4881f8ba08814c4f4074c1d79e9e4adc52",
+      "demo10.jpg": "bc77f215081f58de8d079e821e2808f6ee2727dfa729c10a5921c186a32c7638",
+      "demo16.jpg": "a92e51732b38ad8b21b5cbbc6883374bd5ab56bb4907d6c4f1e13307970480ee"
+    }
+  }
+}

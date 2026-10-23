@@ -1,0 +1,11 @@
+# Relume model tooling (Phase 1). Exact pins; the full resolved set is in
+# requirements-lock.txt. onnxruntime matches the C++ runtime (1.31.0).
+torch==2.14.1
+torchvision==0.29.1        # imported by upstream depth_anything_v2/dpt.py
+onnx==1.23.2
+onnxscript==0.7.2          # required by torch.onnx.export(dynamo=True)
+onnxruntime==1.31.0
+numpy==2.5.4
+opencv-python-headless==5.0.0.93  # imported by upstream dpt.py; used for the upstream reference path only
+pillow==13.0.0
+pytest==9.1.1
