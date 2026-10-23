@@ -1,0 +1,417 @@
+{
+  "description": "Agreement between preprocessing methods; C (official upstream) is a reference behaviour, not ground truth. Normalized maps use the 2nd-98th percentile per image.",
+  "methods": {
+    "A": "letterbox 448 (Relume proposed), ONNX Runtime CPU",
+    "B": "stretch to 448x448, ONNX Runtime CPU",
+    "C": "upstream image2tensor 518 lower-bound, multiple of 14, bicubic; PyTorch CPU; bilinear align_corners=True upsample"
+  },
+  "mean_by_subset": {
+    "A_letterbox_vs_C_upstream/upstream_demo": {
+      "pearson": 0.9747455738536914,
+      "spearman": 0.9652594290859156,
+      "mean_abs_diff_normalized": 0.034655302940644436,
+      "edge_band_mean_abs_diff": 0.025222700173069722,
+      "interior_mean_abs_diff": 0.03700138266368121
+    },
+    "A_letterbox_vs_C_upstream/upstream_demo_cropped_16x9": {
+      "pearson": 0.9672080048683748,
+      "spearman": 0.9518519572526525,
+      "mean_abs_diff_normalized": 0.05256599993299736,
+      "edge_band_mean_abs_diff": 0.04194863706392991,
+      "interior_mean_abs_diff": 0.05522034065026423
+    },
+    "B_stretch_vs_C_upstream/upstream_demo": {
+      "pearson": 0.9837049926706278,
+      "spearman": 0.9748320623084122,
+      "mean_abs_diff_normalized": 0.03146315857496994,
+      "edge_band_mean_abs_diff": 0.02037382137826014,
+      "interior_mean_abs_diff": 0.03422261750279014
+    },
+    "B_stretch_vs_C_upstream/upstream_demo_cropped_16x9": {
+      "pearson": 0.9807002904687447,
+      "spearman": 0.9727384028887052,
+      "mean_abs_diff_normalized": 0.03960817322914911,
+      "edge_band_mean_abs_diff": 0.0361729150428521,
+      "interior_mean_abs_diff": 0.04046698777572336
+    }
+  },
+  "images": [
+    {
+      "image": "demo01_original",
+      "kind": "upstream_demo",
+      "source_sha256": "35ef1bbb63f6540e49aa9b6302b9b938be4fe8b9c08c07c3694b02396b0e87e0",
+      "size": [
+        2048,
+        1362
+      ],
+      "upstream_network_input": [
+        1,
+        3,
+        518,
+        784
+      ],
+      "A_letterbox_vs_C_upstream": {
+        "pearson": 0.9916011779748723,
+        "spearman": 0.9954473282089784,
+        "mean_abs_diff_normalized": 0.016233691364328177,
+        "edge_band_mean_abs_diff": 0.0177796236673277,
+        "interior_mean_abs_diff": 0.015847917431836552
+      },
+      "B_stretch_vs_C_upstream": {
+        "pearson": 0.9940738906406518,
+        "spearman": 0.9968469886007386,
+        "mean_abs_diff_normalized": 0.015570389262406984,
+        "edge_band_mean_abs_diff": 0.008407870913253967,
+        "interior_mean_abs_diff": 0.017357733290819476
+      },
+      "A_letterbox_vs_B_stretch": {
+        "pearson": 0.9965521994946365,
+        "spearman": 0.998014394219507,
+        "mean_abs_diff_normalized": 0.010788000520734618,
+        "edge_band_mean_abs_diff": 0.019922825935349657,
+        "interior_mean_abs_diff": 0.008508484453968294
+      }
+    },
+    {
+      "image": "demo01_webcam16x9",
+      "kind": "upstream_demo_cropped_16x9",
+      "source_sha256": "35ef1bbb63f6540e49aa9b6302b9b938be4fe8b9c08c07c3694b02396b0e87e0",
+      "size": [
+        1280,
+        720
+      ],
+      "upstream_network_input": [
+        1,
+        3,
+        518,
+        924
+      ],
+      "A_letterbox_vs_C_upstream": {
+        "pearson": 0.9783792367080429,
+        "spearman": 0.992773690840062,
+        "mean_abs_diff_normalized": 0.06162794631661064,
+        "edge_band_mean_abs_diff": 0.05503919837134852,
+        "interior_mean_abs_diff": 0.06327513330292618
+      },
+      "B_stretch_vs_C_upstream": {
+        "pearson": 0.9911639343137644,
+        "spearman": 0.9945842347942717,
+        "mean_abs_diff_normalized": 0.04583558605859147,
+        "edge_band_mean_abs_diff": 0.04453218893128173,
+        "interior_mean_abs_diff": 0.046161435340418895
+      },
+      "A_letterbox_vs_B_stretch": {
+        "pearson": 0.9919322202159319,
+        "spearman": 0.9971385613532215,
+        "mean_abs_diff_normalized": 0.018093845227760176,
+        "edge_band_mean_abs_diff": 0.014448264506466928,
+        "interior_mean_abs_diff": 0.019005240408083487
+      }
+    },
+    {
+      "image": "demo03_original",
+      "kind": "upstream_demo",
+      "source_sha256": "764dffd4d97bbacd620bc005fa86837018393ccb5ffd1059c2245a3cacff7782",
+      "size": [
+        1990,
+        1295
+      ],
+      "upstream_network_input": [
+        1,
+        3,
+        518,
+        798
+      ],
+      "A_letterbox_vs_C_upstream": {
+        "pearson": 0.9744139811742784,
+        "spearman": 0.955598486258443,
+        "mean_abs_diff_normalized": 0.054593745129000136,
+        "edge_band_mean_abs_diff": 0.03521133085842182,
+        "interior_mean_abs_diff": 0.05941598513074479
+      },
+      "B_stretch_vs_C_upstream": {
+        "pearson": 0.982005758689393,
+        "spearman": 0.9638891908740774,
+        "mean_abs_diff_normalized": 0.05592423364635203,
+        "edge_band_mean_abs_diff": 0.04056555784880713,
+        "interior_mean_abs_diff": 0.05974538924496977
+      },
+      "A_letterbox_vs_B_stretch": {
+        "pearson": 0.9859568208097234,
+        "spearman": 0.9753523744967811,
+        "mean_abs_diff_normalized": 0.04536637106415381,
+        "edge_band_mean_abs_diff": 0.05385081513055234,
+        "interior_mean_abs_diff": 0.04325548719806817
+      }
+    },
+    {
+      "image": "demo03_webcam16x9",
+      "kind": "upstream_demo_cropped_16x9",
+      "source_sha256": "764dffd4d97bbacd620bc005fa86837018393ccb5ffd1059c2245a3cacff7782",
+      "size": [
+        1280,
+        720
+      ],
+      "upstream_network_input": [
+        1,
+        3,
+        518,
+        924
+      ],
+      "A_letterbox_vs_C_upstream": {
+        "pearson": 0.9627617507279005,
+        "spearman": 0.9383075374757666,
+        "mean_abs_diff_normalized": 0.07413853545436566,
+        "edge_band_mean_abs_diff": 0.06541660012588534,
+        "interior_mean_abs_diff": 0.07631901928648575
+      },
+      "B_stretch_vs_C_upstream": {
+        "pearson": 0.9821159753341974,
+        "spearman": 0.9612851001288752,
+        "mean_abs_diff_normalized": 0.052068811174382494,
+        "edge_band_mean_abs_diff": 0.05935546877559715,
+        "interior_mean_abs_diff": 0.05024714677407882
+      },
+      "A_letterbox_vs_B_stretch": {
+        "pearson": 0.9761739440508996,
+        "spearman": 0.9546586807742877,
+        "mean_abs_diff_normalized": 0.054703800229518026,
+        "edge_band_mean_abs_diff": 0.07186857073571958,
+        "interior_mean_abs_diff": 0.050412607602967625
+      }
+    },
+    {
+      "image": "demo07_original",
+      "kind": "upstream_demo",
+      "source_sha256": "345bec735adc4c238bf14ddf1d182c4881f8ba08814c4f4074c1d79e9e4adc52",
+      "size": [
+        2252,
+        1498
+      ],
+      "upstream_network_input": [
+        1,
+        3,
+        518,
+        784
+      ],
+      "A_letterbox_vs_C_upstream": {
+        "pearson": 0.937771846180751,
+        "spearman": 0.9323545402565908,
+        "mean_abs_diff_normalized": 0.053035831452869484,
+        "edge_band_mean_abs_diff": 0.033042058448055266,
+        "interior_mean_abs_diff": 0.058000951749065006
+      },
+      "B_stretch_vs_C_upstream": {
+        "pearson": 0.968150750547494,
+        "spearman": 0.9703209244555723,
+        "mean_abs_diff_normalized": 0.0408958105964817,
+        "edge_band_mean_abs_diff": 0.0182388818224081,
+        "interior_mean_abs_diff": 0.0465222812420433
+      },
+      "A_letterbox_vs_B_stretch": {
+        "pearson": 0.9739873458388866,
+        "spearman": 0.9591341924047947,
+        "mean_abs_diff_normalized": 0.036980327248032845,
+        "edge_band_mean_abs_diff": 0.03447716880899198,
+        "interior_mean_abs_diff": 0.03760194492706132
+      }
+    },
+    {
+      "image": "demo07_webcam16x9",
+      "kind": "upstream_demo_cropped_16x9",
+      "source_sha256": "345bec735adc4c238bf14ddf1d182c4881f8ba08814c4f4074c1d79e9e4adc52",
+      "size": [
+        1280,
+        720
+      ],
+      "upstream_network_input": [
+        1,
+        3,
+        518,
+        924
+      ],
+      "A_letterbox_vs_C_upstream": {
+        "pearson": 0.9393447477123787,
+        "spearman": 0.902702232966229,
+        "mean_abs_diff_normalized": 0.05957710360192809,
+        "edge_band_mean_abs_diff": 0.043617654364517006,
+        "interior_mean_abs_diff": 0.06356696591128085
+      },
+      "B_stretch_vs_C_upstream": {
+        "pearson": 0.9635589379393968,
+        "spearman": 0.9578714373467078,
+        "mean_abs_diff_normalized": 0.045596446932221424,
+        "edge_band_mean_abs_diff": 0.03587643259923421,
+        "interior_mean_abs_diff": 0.048026450515468236
+      },
+      "A_letterbox_vs_B_stretch": {
+        "pearson": 0.9729898185174332,
+        "spearman": 0.9324967824421941,
+        "mean_abs_diff_normalized": 0.041810315143224384,
+        "edge_band_mean_abs_diff": 0.03865164745458583,
+        "interior_mean_abs_diff": 0.04259998206538402
+      }
+    },
+    {
+      "image": "demo10_original",
+      "kind": "upstream_demo",
+      "source_sha256": "bc77f215081f58de8d079e821e2808f6ee2727dfa729c10a5921c186a32c7638",
+      "size": [
+        2048,
+        1332
+      ],
+      "upstream_network_input": [
+        1,
+        3,
+        518,
+        798
+      ],
+      "A_letterbox_vs_C_upstream": {
+        "pearson": 0.9833860303429216,
+        "spearman": 0.9576022867922409,
+        "mean_abs_diff_normalized": 0.021270101584958918,
+        "edge_band_mean_abs_diff": 0.028813058721672134,
+        "interior_mean_abs_diff": 0.019387900273171194
+      },
+      "B_stretch_vs_C_upstream": {
+        "pearson": 0.9818607899658266,
+        "spearman": 0.9535003145696223,
+        "mean_abs_diff_normalized": 0.02487716683906857,
+        "edge_band_mean_abs_diff": 0.027060388402189352,
+        "interior_mean_abs_diff": 0.02433238547341179
+      },
+      "A_letterbox_vs_B_stretch": {
+        "pearson": 0.993679708571901,
+        "spearman": 0.9813604666683495,
+        "mean_abs_diff_normalized": 0.017766040919924984,
+        "edge_band_mean_abs_diff": 0.018584846277031008,
+        "interior_mean_abs_diff": 0.017561723635694023
+      }
+    },
+    {
+      "image": "demo10_webcam16x9",
+      "kind": "upstream_demo_cropped_16x9",
+      "source_sha256": "bc77f215081f58de8d079e821e2808f6ee2727dfa729c10a5921c186a32c7638",
+      "size": [
+        1280,
+        720
+      ],
+      "upstream_network_input": [
+        1,
+        3,
+        518,
+        924
+      ],
+      "A_letterbox_vs_C_upstream": {
+        "pearson": 0.9731729132612043,
+        "spearman": 0.9410240484821911,
+        "mean_abs_diff_normalized": 0.034732622076926505,
+        "edge_band_mean_abs_diff": 0.03777005038758604,
+        "interior_mean_abs_diff": 0.03397326499926163
+      },
+      "B_stretch_vs_C_upstream": {
+        "pearson": 0.9803113854728763,
+        "spearman": 0.9624127706611905,
+        "mean_abs_diff_normalized": 0.028653553563851197,
+        "edge_band_mean_abs_diff": 0.02943591442500867,
+        "interior_mean_abs_diff": 0.028457963348561825
+      },
+      "A_letterbox_vs_B_stretch": {
+        "pearson": 0.9838144080752217,
+        "spearman": 0.9711722322140055,
+        "mean_abs_diff_normalized": 0.024016632351379047,
+        "edge_band_mean_abs_diff": 0.033960884592301406,
+        "interior_mean_abs_diff": 0.021530569291148455
+      }
+    },
+    {
+      "image": "demo16_original",
+      "kind": "upstream_demo",
+      "source_sha256": "a92e51732b38ad8b21b5cbbc6883374bd5ab56bb4907d6c4f1e13307970480ee",
+      "size": [
+        2048,
+        1332
+      ],
+      "upstream_network_input": [
+        1,
+        3,
+        518,
+        798
+      ],
+      "A_letterbox_vs_C_upstream": {
+        "pearson": 0.9865548335956332,
+        "spearman": 0.985294503913325,
+        "mean_abs_diff_normalized": 0.028143145172065454,
+        "edge_band_mean_abs_diff": 0.011267429169871692,
+        "interior_mean_abs_diff": 0.032354158733588476
+      },
+      "B_stretch_vs_C_upstream": {
+        "pearson": 0.9924337735097735,
+        "spearman": 0.9896028930420508,
+        "mean_abs_diff_normalized": 0.020048192530540396,
+        "edge_band_mean_abs_diff": 0.007596407904642153,
+        "interior_mean_abs_diff": 0.023155298262706372
+      },
+      "A_letterbox_vs_B_stretch": {
+        "pearson": 0.9891424774530814,
+        "spearman": 0.9886853996237437,
+        "mean_abs_diff_normalized": 0.02225813501213997,
+        "edge_band_mean_abs_diff": 0.007560222621324972,
+        "interior_mean_abs_diff": 0.02592571915468855
+      }
+    },
+    {
+      "image": "demo16_webcam16x9",
+      "kind": "upstream_demo_cropped_16x9",
+      "source_sha256": "a92e51732b38ad8b21b5cbbc6883374bd5ab56bb4907d6c4f1e13307970480ee",
+      "size": [
+        1280,
+        720
+      ],
+      "upstream_network_input": [
+        1,
+        3,
+        518,
+        924
+      ],
+      "A_letterbox_vs_C_upstream": {
+        "pearson": 0.9823813759323471,
+        "spearman": 0.9844522764990141,
+        "mean_abs_diff_normalized": 0.03275379221515594,
+        "edge_band_mean_abs_diff": 0.007899682070312624,
+        "interior_mean_abs_diff": 0.03896731975136677
+      },
+      "B_stretch_vs_C_upstream": {
+        "pearson": 0.9863512192834891,
+        "spearman": 0.9875384715124804,
+        "mean_abs_diff_normalized": 0.025886468416699004,
+        "edge_band_mean_abs_diff": 0.011664570483138742,
+        "interior_mean_abs_diff": 0.02944194290008907
+      },
+      "A_letterbox_vs_B_stretch": {
+        "pearson": 0.9824639650224081,
+        "spearman": 0.9861363866673508,
+        "mean_abs_diff_normalized": 0.031800682208834946,
+        "edge_band_mean_abs_diff": 0.011650228326789207,
+        "interior_mean_abs_diff": 0.036838295679346385
+      }
+    }
+  ],
+  "latency": {
+    "note": "PyTorch CPU median of 10 runs on one 1280x720 frame; same runtime for both, so only the input size differs. Informational laptop timing.",
+    "A_or_B_448x448_ms": 314.5194790004098,
+    "C_upstream_ms": 1041.9921039997462,
+    "C_upstream_input_shape": [
+      1,
+      3,
+      518,
+      924
+    ]
+  },
+  "environment": {
+    "python": "3.14.7",
+    "torch": "2.14.1",
+    "onnxruntime": "1.31.0",
+    "machine": "arm64"
+  }
+}
