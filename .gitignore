@@ -26,3 +26,4 @@ models/
 .env
 .env.*
 !.env.example
+third_party/
