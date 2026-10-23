@@ -42,6 +42,13 @@ def test_onnx_hash_matches_manifest(onnx_path, manifest):
     assert digest == manifest["onnx"]["sha256"], "model differs from the manifest; re-run scripts/export.py"
 
 
+def test_no_local_paths_embedded(onnx_path):
+    """The model must not depend on, or leak, where the repo is checked out."""
+    data = onnx_path.read_bytes()
+    assert str(ROOT).encode() not in data
+    assert b"pkg.torch.onnx.stack_trace" not in data
+
+
 def test_checker_and_signature(onnx_path, manifest):
     import onnx
 

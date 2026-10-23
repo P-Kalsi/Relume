@@ -13,9 +13,11 @@ Phase 1 record for the depth network. The machine-readable source of truth is
 | Upstream code | https://github.com/DepthAnything/Depth-Anything-V2 @ `a561b849ebae10a6f5ef49e26c83cbbcd36c71bf` (fetched, not vendored) |
 | Checkpoint | HF `depth-anything/Depth-Anything-V2-Small` @ `03876f8651c73a60fe4c2c48294e09fcb6838fcf`, `depth_anything_v2_vits.pth`, 99,218,434 B, SHA-256 `715fade1…bf57860e1378` |
 | Config | `encoder='vits', features=64, out_channels=[48, 96, 192, 384]`, loaded with `strict=True` |
-| ONNX | `models/depth_anything_v2_small_448.onnx`, 99,770,048 B, SHA-256 `8d661548…bc9ece1d`, IR 10, opset 18, 466 nodes |
-| Exporter | `torch.onnx.export(dynamo=True, opset_version=18, optimize=True, external_data=False)`, torch 2.14.1 |
-| Determinism | All 6 exports so far produced byte-identical files: each `export.py` run exports twice and compares the two. |
+| ONNX | `models/depth_anything_v2_small_448.onnx`, 99,345,329 B, SHA-256 `6ca89260de8ed5cb08571d197f81a04cf54cb04857c3a8030759b1aa8a8aa42c`, IR 10, opset 18, 466 nodes |
+| Exporter | `torch.onnx.export(dynamo=True, opset_version=18, optimize=True, external_data=False)`, torch 2.14.1. After export, the per-node `pkg.torch.onnx.stack_trace` metadata is removed. |
+| Determinism | Byte-identical across repeated exports **and across checkout locations**: the working copy and a fresh clone in another directory produce the same SHA-256. |
+
+**Why the stack traces are removed:** the exporter stores a Python stack trace on every node, and those traces contain absolute paths to the checkout. Before they were removed, a fresh clone produced a different hash (`8ee33eb9…` vs `8d661548…`) even though the weights, ops, connections and attributes were bit-identical, and the file contained the developer's home-folder path. Removing only that key leaves weights and graph unchanged, and parity results were identical before and after. A test checks that no local path is embedded.
 
 Neither the weights nor the ONNX file is in git. `scripts/setup_python.sh` downloads the weights and checks their hash, and `scripts/export.py` regenerates the ONNX file.
 

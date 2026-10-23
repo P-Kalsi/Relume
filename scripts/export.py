@@ -61,6 +61,27 @@ def export_to(model, example, path: Path) -> None:
             external_data=False,  # one self-contained file (~100 MB, < 2 GB limit)
             optimize=True,
         )
+    strip_local_paths(path)
+
+
+# torch.onnx records a Python stack trace per node, containing absolute paths
+# of the checkout. That makes the file (and its hash) depend on where the repo
+# lives and leaks local paths, so it is removed. Weights, graph structure and
+# all other metadata are untouched.
+STRIPPED_NODE_METADATA = ("pkg.torch.onnx.stack_trace",)
+
+
+def strip_local_paths(path: Path) -> None:
+    import onnx
+
+    model = onnx.load(str(path))
+    for node in model.graph.node:
+        kept = [p for p in node.metadata_props if p.key not in STRIPPED_NODE_METADATA]
+        del node.metadata_props[:]
+        node.metadata_props.extend(kept)
+    onnx.save(model, str(path))
+    if str(ROOT).encode() in path.read_bytes():
+        raise SystemExit(f"FAIL: {path} still contains the local checkout path {ROOT}")
 
 
 def tensor_signature(value_info) -> dict:
@@ -159,6 +180,8 @@ def main() -> int:
             "size": ONNX_PATH.stat().st_size,
             "export_deterministic": deterministic,
             "exporter": "torch.onnx.export(dynamo=True, optimize=True, external_data=False)",
+            "post_export": "removed node metadata " + ", ".join(STRIPPED_NODE_METADATA)
+                           + " (absolute local paths); weights and graph unchanged",
             "opset": OPSET,
             **graph_info,
         },

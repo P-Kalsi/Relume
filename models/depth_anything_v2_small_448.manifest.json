@@ -21,10 +21,11 @@
   },
   "onnx": {
     "file": "depth_anything_v2_small_448.onnx",
-    "sha256": "8d6615480be624c0d8b27311c7511247e105076c0c5db6b1f6b37829bc9ece1d",
-    "size": 99770048,
+    "sha256": "6ca89260de8ed5cb08571d197f81a04cf54cb04857c3a8030759b1aa8a8aa42c",
+    "size": 99345329,
     "export_deterministic": true,
     "exporter": "torch.onnx.export(dynamo=True, optimize=True, external_data=False)",
+    "post_export": "removed node metadata pkg.torch.onnx.stack_trace (absolute local paths); weights and graph unchanged",
     "opset": 18,
     "ir_version": 10,
     "opset_imports": {

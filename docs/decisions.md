@@ -93,8 +93,13 @@ Details and numbers: `docs/model.md`.
   and out of Relume's history.
 - **Exporter: dynamo, opset 18, single file.** `external_data=False` keeps the
   roughly 100 MB weights inside one `.onnx` file. torch 2.14's default would
-  write them to a separate file. Export is deterministic: every re-export was
-  byte-identical.
+  write them to a separate file.
+- **The export strips per-node stack traces.** torch embeds absolute source
+  paths in `pkg.torch.onnx.stack_trace` node metadata. The fresh-clone check
+  caught this: the clone's hash differed even though weights and graph were
+  bit-identical, and the file leaked local paths. With that key removed, the
+  export is byte-identical across runs and checkout locations
+  (SHA-256 `6ca89260…`).
 - **Preprocessing is pure NumPy** with an explicitly specified bilinear
   resize. That makes it exactly reproducible in C++; OpenCV's resize is not
   formally specified. Golden vectors pin the contract.
