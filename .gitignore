@@ -1,0 +1,28 @@
+# Build output
+build/
+cmake-build-*/
+CMakeFiles/
+CMakeCache.txt
+
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+
+# Python
+.venv/
+__pycache__/
+.pytest_cache/
+
+# ML model artifacts
+models/
+*.onnx
+*.pt
+*.pth
+
+# Secrets
+.env
+.env.*
+!.env.example
