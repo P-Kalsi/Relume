@@ -134,19 +134,42 @@ There are two implementations.
 **`layer` (default): `src/platform/macos/layer_presenter.mm`.** It never
 acquires a `CAMetalDrawable`.
 
-- Each window has 3 IOSurfaces, imported into Dawn as
+- Each window has 4 IOSurfaces, imported into Dawn as
   `SharedTextureMemoryIOSurface` (device features `SharedTextureMemoryIOSurface`
   and `SharedFenceMTLSharedEvent`, requested only when the adapter has them).
+  - Why four: the window server can hold two surfaces at once (on screen and
+    being composited) while a third waits on the GPU. With three, some runs
+    skipped up to about 30% of frames; with four, none were skipped in
+    testing.
 - Buffer lifecycle: `free → rendering → gpu-pending → ready → displayed`.
-  - A buffer is rendered into only if it is free and `!IOSurfaceIsInUse`
-    (the window server isn't reading it). Otherwise the window skips that
-    frame; nothing waits.
   - `Present()` calls `EndAccess`, then `queue.OnSubmittedWorkDone`. The
     completion callback runs inside `Instance::ProcessEvents` and holds only
     a `weak_ptr`.
   - `FinishFrames()` sets `layer.contents` to the newest completed IOSurface
-    in a `CATransaction` with actions disabled. The GPU has finished before
-    Core Animation sees a frame.
+    in a `CATransaction` with actions disabled. **The GPU has finished before
+    Core Animation sees a frame.**
+- **Reuse rule** (`CompositorReuseTracker`, `include/relume/compositor_reuse.hpp`,
+  unit-tested). GPU completion alone never makes a surface reusable.
+  - The displayed surface is never rendered into.
+  - A surface that was ever committed to Core Animation is rendered into
+    again only if `IOSurfaceIsInUse` is false **and** a *newer* committed
+    surface has since been seen in use. That newer sighting shows the render
+    server has applied a later transaction.
+  - "Not in use" alone is not trusted. At window startup, and at the instant
+    a window is covered, some committed surfaces were measured never to be
+    marked in use, so "not in use" there doesn't prove the render server is
+    done with them.
+  - Surfaces never committed (new, or superseded before display) need only
+    the GPU to have finished.
+  - If no surface qualifies, the window skips that frame; nothing waits.
+- **Remaining assumption (not proven here):** Core Animation applies
+  committed transactions in order and never returns to superseded contents.
+  Measured support:
+  - In 99.9% of commits, the surface was in use within 0.1 ms.
+  - With four buffers, no surface was ever reused without first being seen
+    in use.
+  - The rule's hold-back path was **not triggered** in the measured runs. It
+    is a guard, covered by unit tests rather than by observed engagement.
 - Ownership: Dawn's SharedTextureMemory retains its IOSurface while GPU work
   uses it, and `CALayer` retains the surface it displays. Dropping buffers on
   resize or teardown is therefore safe; all were freed at exit in testing.

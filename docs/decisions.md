@@ -280,6 +280,10 @@ Output window is resized and minimized, on a fixed schedule).
 - **OBS compatibility is not verified.** OBS is not installed. Covered
   windows do keep receiving new layer contents, but whether ScreenCaptureKit
   captures them correctly is untested (Phase 7).
+- **The IOSurface reuse rule rests on one assumption:** Core Animation
+  applies commits in order and never shows superseded contents. It is
+  measured, not proven, and the hold-back path was never triggered in a real
+  run. The implementation is not claimed to be race-free.
 - **The layer path is macOS-only.** Other platforms use `SurfacePresenter`.
 - **The occlusion test needs a GUI session.** It carries the `display` label:
   `ctest --preset display`.

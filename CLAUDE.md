@@ -31,6 +31,7 @@ Relume is a native macOS (Apple Silicon) app for live, on-device relighting of w
 - Our own targets use `relume_set_warnings()` (`cmake/Warnings.cmake`), and new code must build with no warnings.
 - Python tooling lives in `scripts/` (with the shared package `scripts/relume_model/`) and runs only in `.venv`. The preprocessing contract has **one** implementation, `scripts/relume_model/preprocess.py`. C++ must match `tests/python/golden/preprocess_golden.json`.
 - Match the surrounding code's style and comment density.
+- Windows present only the fixed 1280×720 `OutputTexture`, through `WindowPresenter`. On macOS the default `LayerPresenter` (IOSurface `CALayer.contents`) must never block. Don't add `wgpu::Surface::GetCurrentTexture` calls to the main loop (it can block for 1 s when a window is covered). Reuse IOSurfaces only through `CompositorReuseTracker`. See `docs/architecture.md`.
 
 ## Build and test
 Toolchain: macOS 14+ (minimum deployment target 14.0), **Apple clang 16+** (Command Line Tools 16.2). Apple clang 15 cannot build the pinned Dawn.
@@ -40,6 +41,7 @@ scripts/setup_python.sh                    # once: .venv (3.14, else 3.12), chec
 .venv/bin/python scripts/export.py         # ONNX model + manifest (needed by the CTest python_model_artifacts test)
 cmake --preset debug && cmake --build --preset debug && ctest --preset debug
 # other presets: release, asan (ASan+UBSan), tsan (optional)
+ctest --preset display                     # window occlusion test: opens windows (~1 min), needs a GUI session; run after presentation changes
 .venv/bin/python scripts/check_parity.py   # PyTorch vs ONNX Runtime parity; non-zero exit on failure
 .venv/bin/python -m pytest tests/python -v
 ```
