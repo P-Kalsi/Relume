@@ -50,7 +50,7 @@ struct PlaneLayout {
 };
 
 struct VideoFrame {
-  std::uint64_t frame_id = 0;      // monotonically increasing per source
+  std::uint64_t frame_id = 0;      // monotonically increasing per source, starting at 1
   std::int64_t capture_time_ns = 0;  // presentation time on `clock`
   TimestampClock clock = TimestampClock::kSynthetic;
   // steady_clock time when the source received the frame. Not comparable to
