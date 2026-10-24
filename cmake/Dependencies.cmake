@@ -19,6 +19,35 @@ function(relume_fetch_glfw)
   FetchContent_MakeAvailable(glfw)
 endfunction()
 
+# Dear ImGui with its GLFW and WebGPU (Dawn) backends, built as the static
+# library relume_imgui. ImGui ships no CMake build, so the sources are only
+# downloaded and compiled here (third-party flags, not relume_set_warnings).
+# GitHub publishes no digest for tag archives; the hash was computed on first
+# download.
+function(relume_fetch_imgui)
+  if(TARGET relume_imgui)
+    return()
+  endif()
+  FetchContent_Declare(imgui
+    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.93.0.tar.gz
+    URL_HASH SHA256=f7bf6bc76e5d79d40d751096663e6c5d18daf08129dd52e7f7b09e4251c8eeee
+    SOURCE_SUBDIR no-cmake-build)  # populate only
+  FetchContent_MakeAvailable(imgui)
+  set(dir "${imgui_SOURCE_DIR}")
+  add_library(relume_imgui STATIC
+    "${dir}/imgui.cpp" "${dir}/imgui_draw.cpp" "${dir}/imgui_tables.cpp" "${dir}/imgui_widgets.cpp"
+    "${dir}/backends/imgui_impl_glfw.cpp" "${dir}/backends/imgui_impl_wgpu.cpp")
+  target_include_directories(relume_imgui PUBLIC "${dir}" "${dir}/backends")
+  target_compile_definitions(relume_imgui PUBLIC IMGUI_IMPL_WEBGPU_BACKEND_DAWN IMGUI_DISABLE_OBSOLETE_FUNCTIONS)
+  target_link_libraries(relume_imgui PUBLIC dawn::webgpu_dawn glfw)
+  if(APPLE)
+    # The WebGPU backend's macOS surface helper uses Cocoa, so upstream
+    # requires compiling it as Objective-C++ (manual reference counting).
+    set_source_files_properties("${dir}/backends/imgui_impl_wgpu.cpp" PROPERTIES COMPILE_FLAGS "-x objective-c++")
+    target_link_libraries(relume_imgui PUBLIC "-framework Cocoa" "-framework QuartzCore")
+  endif()
+endfunction()
+
 # GoogleTest: native unit tests. GitHub publishes no digest for this asset;
 # the hash was computed on first download.
 function(relume_fetch_googletest)
