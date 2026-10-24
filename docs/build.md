@@ -66,6 +66,13 @@ source; offscreen Dawn tests compare GPU output against the CPU reference.
 It also runs three `app_headless_smoke_*` tests: the real pipeline from the
 file source, checked pixel by pixel. None of these needs a camera.
 
+Window test (opens real windows for about a minute; needs a logged-in GUI
+session; excluded from the presets above):
+
+```sh
+ctest --preset display      # app_window_occlusion: cover/resize/minimize, fails if presentation blocks
+```
+
 ## 3. Run Relume
 
 ```sh
@@ -78,6 +85,9 @@ open -W -n --stdout "$PWD/relume.log" --stderr "$PWD/relume.log" \
 #   --pixel-format nv12|bgra   capture output format (default nv12)
 #   --camera <unique-id>       a specific camera (IDs are listed in the log)
 #   --seconds <S> / --frames <N> / --stats <interval-s>
+#   --presenter layer|surface  window presentation (default layer; surface is the
+#                              CAMetalLayer fallback, which can freeze ~1 s on cover)
+#   --trace                    log the phases of render-loop iterations over 50 ms
 
 # File source (no camera, no permission; can be run directly)
 build/debug/src/Relume.app/Contents/MacOS/Relume --source file --pixel-format nv12

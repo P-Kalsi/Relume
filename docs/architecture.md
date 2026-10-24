@@ -115,17 +115,66 @@ sweep of Cb/Cr codes. The tolerance, fixed in advance, is ±1.
 
 - **`OutputTexture` is always 1280×720 RGBA8.** No window size, Retina scale
   or display change alters it.
+- **Startup placement:** the Output and Controls windows open side by side,
+  so Controls does not cover Output.
 - **The Output window** has its content area locked to 16:9. It starts at
   1280/scale × 720/scale points, so its framebuffer is 1280×720 px; this
-  measured 1280×720 on the M2's 2× display. After a resize or a display
-  change, only the surface is reconfigured, and `Presenter` aspect-fits with
-  black bars.
-- **Surfaces** use `BGRA8Unorm` (not sRGB), so passthrough is an identity,
-  with opaque alpha and Fifo present mode.
+  measured 1280×720 on the M2's 2× display. `Presenter` aspect-fits the
+  output with black bars into whatever framebuffer the window has.
 - **The orientation is unmirrored and unrotated**, which is what the camera
   sees and what remote meeting participants should receive.
 - **When the camera is unavailable, denied or failed,** the output is cleared
   to black instead of freezing on the last frame.
+
+## Window presentation
+
+Each window presents through a `WindowPresenter` (`src/app/window.hpp`).
+There are two implementations.
+
+**`layer` (default): `src/platform/macos/layer_presenter.mm`.** It never
+acquires a `CAMetalDrawable`.
+
+- Each window has 3 IOSurfaces, imported into Dawn as
+  `SharedTextureMemoryIOSurface` (device features `SharedTextureMemoryIOSurface`
+  and `SharedFenceMTLSharedEvent`, requested only when the adapter has them).
+- Buffer lifecycle: `free → rendering → gpu-pending → ready → displayed`.
+  - A buffer is rendered into only if it is free and `!IOSurfaceIsInUse`
+    (the window server isn't reading it). Otherwise the window skips that
+    frame; nothing waits.
+  - `Present()` calls `EndAccess`, then `queue.OnSubmittedWorkDone`. The
+    completion callback runs inside `Instance::ProcessEvents` and holds only
+    a `weak_ptr`.
+  - `FinishFrames()` sets `layer.contents` to the newest completed IOSurface
+    in a `CATransaction` with actions disabled. The GPU has finished before
+    Core Animation sees a frame.
+- Ownership: Dawn's SharedTextureMemory retains its IOSurface while GPU work
+  uses it, and `CALayer` retains the surface it displays. Dropping buffers on
+  resize or teardown is therefore safe; all were freed at exit in testing.
+- `contentsScale` matches the window's backing scale. `contentsGravity` is
+  *center* on a black background, so a frame that lags a live resize is
+  centred, never stretched.
+- The loop is paced to the display refresh rate (`NSScreen.maximumFramesPerSecond`;
+  60 Hz here), because there is no vsync.
+- Surfaces are untagged BGRA8, the same as the old `CAMetalLayer` default, so
+  passthrough colours are unchanged. Colour management is Phase 4.
+
+**`surface` (fallback): `SurfacePresenter`**, a `wgpu::Surface` on a
+`CAMetalLayer` (Fifo, vsync).
+- Selected with `--presenter surface`, or automatically when the IOSurface
+  features are missing.
+- It has the known freeze: after a window is covered, `[CAMetalLayer nextDrawable]`
+  (called by Dawn's `Surface::GetCurrentTexture` while it holds the device
+  lock) blocks for up to 1 s and stalls all rendering.
+
+**Remaining main-thread stalls (both presenters).** GLFW runs on the main
+thread. While AppKit runs a modal loop, `glfwPollEvents` does not return, so
+compositing pauses:
+- dragging or live-resizing a window by hand (measured up to 6.3 s while the
+  resize was held);
+- the minimize/restore animation (about 0.55 s).
+
+Camera capture continues on its own queue during these pauses; frames are
+dropped as unread, not queued.
 
 ## Privacy
 

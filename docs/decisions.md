@@ -193,10 +193,7 @@ Architecture details: `docs/architecture.md`. Signing: `docs/signing.md`.
 
 ### Known issues and limitations
 
-- **About 1 s render stalls on window occlusion changes.** `[surface] Relume Output waited ~1000 ms for a drawable` was logged.
-  - Cause: `CAMetalLayer.nextDrawable` blocks for up to 1 s when no drawable is free, which happens when the Output window's occlusion changes (for example, the Controls window raised over it).
-  - Seen once per affected run, after which the loop recovers. Capture continues; about 30 frames are dropped as unread.
-  - Candidate fixes for Phase 5: present each window without blocking the other (separate present thread, or skip-and-retry on occlusion notifications), checked against OBS capture of occluded windows.
+- **About 1 s render stalls on window occlusion changes:** fixed by the Phase 2 stabilization below.
 - **Not verified live:**
   - automatic reconnect of the *same* camera (unit-tested only)
   - the denied-permission path (M5; it needs the user's approval to change camera permission)
@@ -205,3 +202,84 @@ Architecture details: `docs/architecture.md`. Signing: `docs/signing.md`.
   - exclusion of OBS Virtual Camera with OBS installed (unit-tested only; OBS is not installed)
 - **Capture timestamps** are recorded on the CoreMedia host-time clock. They are not compared with `steady_clock`, and no end-to-end latency is claimed.
 - **Camera permission is requested again after every rebuild** with ad-hoc signing. `docs/signing.md` explains the optional fix.
+
+## Phase 2 stabilization — window occlusion freeze (2026-10-24)
+
+### Investigation
+
+Instruments used: `--trace` (phase timings of any iteration over 50 ms, each
+window's acquire/present time and `NSWindow.occlusionState`) and
+`--occlusion-test` (an opaque covering window covers each window, then the
+Output window is resized and minimized, on a fixed schedule).
+
+- **Where it blocks:** every freeze was about 1003 ms inside the Output or
+  Controls window's `Surface::GetCurrentTexture`. Polling, capture,
+  compositing and submission were all under 1 ms.
+- **The call chain** (from the Dawn source at the pinned commit):
+  `Surface::GetCurrentTexture` takes the device guard, then
+  `SwapChainMTL` calls `[CAMetalLayer nextDrawable]`. When a window has just
+  been covered, the window server stops returning drawables and the call
+  waits out its 1 s timeout.
+  - Because the device guard is held, rendering from another thread on the
+    same device would block too.
+  - Dawn does not expose the drawable, so its availability cannot be checked
+    first.
+- **The trigger:** the moment of becoming covered. Sustained coverage and
+  uncovering did not block. The occlusion notification often arrives *after*
+  the stall.
+- **In practice**, the main trigger was the Controls window: both windows
+  opened centred and overlapped, so Controls covered Output when it came to
+  the front.
+- **The test harness** needs an opaque covering window. An undrawn window is
+  transparent to the window server and covers nothing.
+
+| Option tried (surface presenter) | Result |
+|---|---|
+| Fifo, 3 drawables (original) | ~1 s stall on every Output cover |
+| Immediate present mode | No help; Controls covers stalled too |
+| `maximumDrawableCount = 2` | Worse: more stalls, up to 2.3 s |
+| Skip presenting while not on screen | 0 stalls in 6 Output covers, but 1 in 3 Controls covers (race); a covered Output window would also stop updating, a risk for OBS |
+
+### Decision (approved): IOSurface layer presentation
+
+- **A feasibility test came first, in isolation.** A scratch program, not in
+  the repo, presented two windows through IOSurface `layer.contents`, with no
+  `CAMetalLayer` or `wgpu::Surface`.
+  - It passed on this M2 with macOS 14.8.9: covering, uncovering and resizing
+    with no stall, max GPU and present work 1.7 ms, 0 WebGPU errors, and every
+    buffer freed at teardown. The first run caught a lifetime bug (callbacks
+    held `shared_ptr`s); the fix was `weak_ptr`.
+  - The user confirmed it looked correct: smooth, no tearing or flicker,
+    right orientation, no stretching.
+- **The implementation is `LayerPresenter`**, the default (see
+  architecture.md). `SurfacePresenter` is kept as `--presenter surface` and
+  as the automatic fallback.
+- **No dependency or version change.** It uses features of the pinned Dawn,
+  plus the system IOSurface framework.
+
+### Results
+
+| Test | Result |
+|---|---|
+| `app_window_occlusion` (file source; covers, resize, minimize), layer presenter | PASS in 5 of 5 runs, plus under asan and tsan. 30.0 fps composed in every covered and resize phase; max presentation work 3.0 ms |
+| Same harness, `--presenter surface` | FAIL: 1002–1003 ms stalls on Output and Controls covers (bug reproduced) |
+| Automated suites | 77/77 pass on the debug, release, asan and tsan presets; no warnings in Relume targets |
+| Hand test with camera (user) | No freeze when covering or uncovering with other apps' windows |
+| 5-minute camera run (release, FaceTime 1280×720 NV12) | No crash, exit 0, 0 WebGPU errors. Capture 30.0 fps throughout (0 driver or pool drops). After the interactive first minute: 4 minutes of composed 30.0 fps, render loop 60.0 fps, max interval 19.3 ms, no new drops. 359 frames went unread, all during the user's window drags and resizes in the first minute. Memory: 227 MiB at 30 s, 243–245 MiB from 60 s to 300 s (flat; no growth) |
+| Latency from GPU submit to layer contents | About one loop iteration (p50 17.0 ms, p95 17.7 ms, measured in the feasibility test). Display (scan-out) latency was not measured |
+
+### Remaining limitations (not fixed; recorded)
+
+- **Window drags and live resizes pause compositing.** AppKit's modal
+  tracking loop blocks `glfwPollEvents`; this was measured up to 6.3 s while a
+  resize was held, and the user confirmed it.
+- **The minimize/restore animation pauses compositing** for about 0.55 s.
+- Both pauses would need the render loop moved off the main thread. That is
+  an architectural change (Dawn device synchronization, GLFW main-thread
+  rules) and is not part of this fix; Phase 5 can evaluate it.
+- **OBS compatibility is not verified.** OBS is not installed. Covered
+  windows do keep receiving new layer contents, but whether ScreenCaptureKit
+  captures them correctly is untested (Phase 7).
+- **The layer path is macOS-only.** Other platforms use `SurfacePresenter`.
+- **The occlusion test needs a GUI session.** It carries the `display` label:
+  `ctest --preset display`.
