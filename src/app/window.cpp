@@ -38,7 +38,7 @@ Window::~Window() {
   }
 }
 
-WindowSurface::WindowSurface(const GpuContext& gpu, GLFWwindow* window) : gpu_(gpu), window_(window) {
+SurfacePresenter::SurfacePresenter(const GpuContext& gpu, GLFWwindow* window) : gpu_(gpu), window_(window) {
   surface_ = CreateSurfaceForWindow(gpu.instance(), window);
   if (!surface_) {
     error_ = "could not create a window surface";
@@ -64,7 +64,7 @@ WindowSurface::WindowSurface(const GpuContext& gpu, GLFWwindow* window) : gpu_(g
   }
 }
 
-void WindowSurface::Configure(std::uint32_t width, std::uint32_t height) {
+void SurfacePresenter::Configure(std::uint32_t width, std::uint32_t height) {
   wgpu::SurfaceConfiguration config{};
   config.device = gpu_.device();
   config.format = format_;
@@ -79,7 +79,7 @@ void WindowSurface::Configure(std::uint32_t width, std::uint32_t height) {
   needs_configure_ = false;
 }
 
-std::optional<WindowSurface::Frame> WindowSurface::Acquire() {
+std::optional<WindowPresenter::Frame> SurfacePresenter::Acquire() {
   if (!ok()) {
     return std::nullopt;
   }
@@ -125,7 +125,7 @@ std::optional<WindowSurface::Frame> WindowSurface::Acquire() {
   return std::nullopt;
 }
 
-void WindowSurface::Present() {
+void SurfacePresenter::Present() {
   const auto start = std::chrono::steady_clock::now();
   surface_.Present();
   last_present_ms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();

@@ -40,9 +40,9 @@ ControlWindow::ControlWindow(const GpuContext& gpu, const OutputTexture& output)
     error_ = "could not create the Controls window";
     return;
   }
-  surface_.emplace(gpu, window_.get());
-  if (!surface_->ok()) {
-    error_ = surface_->error();
+  presenter_ = std::make_unique<SurfacePresenter>(gpu, window_.get());
+  if (!presenter_->ok()) {
+    error_ = presenter_->error();
     return;
   }
   IMGUI_CHECKVERSION();
@@ -55,7 +55,7 @@ ControlWindow::ControlWindow(const GpuContext& gpu, const OutputTexture& output)
   imgui_glfw_ = ImGui_ImplGlfw_InitForOther(window_.get(), true);
   ImGui_ImplWGPU_InitInfo info;
   info.Device = gpu.device().Get();
-  info.RenderTargetFormat = static_cast<WGPUTextureFormat>(surface_->format());
+  info.RenderTargetFormat = static_cast<WGPUTextureFormat>(presenter_->format());
   imgui_wgpu_ = imgui_glfw_ && ImGui_ImplWGPU_Init(&info);
   if (!imgui_wgpu_) {
     error_ = "could not initialize Dear ImGui";
@@ -174,7 +174,7 @@ ControlsActions ControlWindow::Render(const ControlsModel& model) {
   const ControlsActions actions = BuildUi(model);
   ImGui::Render();
 
-  std::optional<WindowSurface::Frame> frame = surface_->Acquire();
+  std::optional<WindowPresenter::Frame> frame = presenter_->Acquire();
   if (!frame) {
     return actions;  // minimized: the UI state still advanced
   }
@@ -192,7 +192,7 @@ ControlsActions ControlWindow::Render(const ControlsModel& model) {
   pass.End();
   const wgpu::CommandBuffer commands = encoder.Finish();
   gpu_.queue().Submit(1, &commands);
-  surface_->Present();
+  presenter_->Present();
   return actions;
 }
 

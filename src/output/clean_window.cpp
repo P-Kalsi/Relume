@@ -23,9 +23,9 @@ CleanWindow::CleanWindow(const GpuContext& gpu)
   const int height = static_cast<int>(std::lround(static_cast<float>(OutputTexture::kHeight) / scale_y));
   glfwSetWindowSize(window_.get(), width, height);
   glfwSetWindowAspectRatio(window_.get(), 16, 9);
-  surface_.emplace(gpu, window_.get());
-  if (!surface_->ok()) {
-    error_ = surface_->error();
+  presenter_ = std::make_unique<SurfacePresenter>(gpu, window_.get());
+  if (!presenter_->ok()) {
+    error_ = presenter_->error();
   }
 }
 
@@ -49,20 +49,20 @@ void CleanWindow::HandleCloseRequest() {
 }
 
 void CleanWindow::Render(Presenter& presenter) {
-  if (!visible_ || !surface_ || !surface_->ok()) {
+  if (!visible_ || !presenter_ || !presenter_->ok()) {
     return;
   }
-  const std::uint32_t old_width = surface_->width();
-  const std::uint32_t old_height = surface_->height();
-  std::optional<WindowSurface::Frame> frame = surface_->Acquire();
+  const std::uint32_t old_width = presenter_->width();
+  const std::uint32_t old_height = presenter_->height();
+  std::optional<WindowPresenter::Frame> frame = presenter_->Acquire();
   if (!frame) {
     return;
   }
   if (frame->width != old_width || frame->height != old_height) {
     std::printf("%s framebuffer: %ux%u px\n", kTitle, frame->width, frame->height);
   }
-  presenter.Present(frame->view, surface_->format(), frame->width, frame->height);
-  surface_->Present();
+  presenter.Present(frame->view, presenter_->format(), frame->width, frame->height);
+  presenter_->Present();
 }
 
 }  // namespace relume

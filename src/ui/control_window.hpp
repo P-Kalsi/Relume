@@ -43,7 +43,13 @@ class ControlWindow {
   ControlWindow& operator=(const ControlWindow&) = delete;
 
   GLFWwindow* window() const { return window_.get(); }
-  const WindowSurface* surface() const { return surface_ ? &*surface_ : nullptr; }
+  const WindowPresenter* presenter() const { return presenter_.get(); }
+  // Hands finished frames to the window; call after Instance::ProcessEvents().
+  void FinishFrames() {
+    if (presenter_) {
+      presenter_->FinishFrames();
+    }
+  }
   bool ok() const { return error_.empty(); }
   const std::string& error() const { return error_; }
   bool should_close() const;
@@ -56,7 +62,7 @@ class ControlWindow {
   const GpuContext& gpu_;
   const OutputTexture& output_;
   Window window_;
-  std::optional<WindowSurface> surface_;
+  std::unique_ptr<WindowPresenter> presenter_;
   bool imgui_glfw_ = false;
   bool imgui_wgpu_ = false;
   std::string pending_virtual_id_;  // a virtual camera awaiting confirmation

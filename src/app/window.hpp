@@ -7,6 +7,7 @@
 #include <webgpu/webgpu_cpp.h>
 
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <string>
 
@@ -40,32 +41,57 @@ class Window {
   GLFWwindow* window_ = nullptr;  // owned; destroyed in ~Window
 };
 
-// The window's swap chain. It is reconfigured whenever the framebuffer size
-// changes (resize, Retina scale change, moving to another display); that never
-// affects the OutputTexture, which has a fixed size.
-class WindowSurface {
+// Presents frames to one window. The caller draws into the texture from
+// Acquire(), submits its commands, then calls Present(); FinishFrames() runs
+// once per loop iteration after Instance::ProcessEvents(). A framebuffer
+// change (resize, Retina scale change, moving to another display) only
+// changes what Acquire() returns; it never affects the OutputTexture.
+class WindowPresenter {
  public:
-  WindowSurface(const GpuContext& gpu, GLFWwindow* window);
-  bool ok() const { return error_.empty(); }
-  const std::string& error() const { return error_; }
-  wgpu::TextureFormat format() const { return format_; }
-
   struct Frame {
     wgpu::Texture texture;
     wgpu::TextureView view;
     std::uint32_t width = 0;
     std::uint32_t height = 0;
   };
-  // The next texture to draw into, or nullopt if the window has no area
-  // (minimized) or the surface is temporarily unavailable.
-  std::optional<Frame> Acquire();
-  void Present();
+
+  virtual ~WindowPresenter() = default;
+  virtual const char* kind() const = 0;
+  bool ok() const { return error_.empty(); }
+  const std::string& error() const { return error_; }
+  wgpu::TextureFormat format() const { return format_; }
+
+  // The next texture to draw into, or nullopt if this window cannot take a
+  // frame now (no area, minimized, or no buffer free); the frame is skipped.
+  virtual std::optional<Frame> Acquire() = 0;
+  virtual void Present() = 0;
+  virtual void FinishFrames() {}
 
   std::uint32_t width() const { return width_; }
   std::uint32_t height() const { return height_; }
-  // Time the last Acquire() spent in GetCurrentTexture and the last Present().
+  // Time the last Acquire() and Present() took.
   double last_acquire_ms() const { return last_acquire_ms_; }
   double last_present_ms() const { return last_present_ms_; }
+
+ protected:
+  wgpu::TextureFormat format_ = wgpu::TextureFormat::Undefined;
+  std::uint32_t width_ = 0;
+  std::uint32_t height_ = 0;
+  double last_acquire_ms_ = 0.0;
+  double last_present_ms_ = 0.0;
+  std::string error_;
+};
+
+// Presents through a wgpu::Surface on a CAMetalLayer (Fifo, vsync paced).
+// Kept as the fallback path: on macOS, acquiring the next drawable blocks for
+// up to 1 s when the window has just been covered, and Dawn holds its device
+// lock meanwhile, which stalls all rendering.
+class SurfacePresenter final : public WindowPresenter {
+ public:
+  SurfacePresenter(const GpuContext& gpu, GLFWwindow* window);
+  const char* kind() const override { return "surface"; }
+  std::optional<Frame> Acquire() override;
+  void Present() override;
 
  private:
   void Configure(std::uint32_t width, std::uint32_t height);
@@ -73,14 +99,8 @@ class WindowSurface {
   const GpuContext& gpu_;
   GLFWwindow* window_;
   wgpu::Surface surface_;
-  wgpu::TextureFormat format_ = wgpu::TextureFormat::Undefined;
   wgpu::CompositeAlphaMode alpha_mode_ = wgpu::CompositeAlphaMode::Auto;
-  std::uint32_t width_ = 0;
-  std::uint32_t height_ = 0;
   bool needs_configure_ = true;
-  double last_acquire_ms_ = 0.0;
-  double last_present_ms_ = 0.0;
-  std::string error_;
 };
 
 }  // namespace relume

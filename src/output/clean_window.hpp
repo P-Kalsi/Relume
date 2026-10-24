@@ -16,7 +16,13 @@ class CleanWindow {
 
   explicit CleanWindow(const GpuContext& gpu);
   GLFWwindow* window() const { return window_.get(); }
-  const WindowSurface* surface() const { return surface_ ? &*surface_ : nullptr; }
+  const WindowPresenter* presenter() const { return presenter_.get(); }
+  // Hands finished frames to the window; call after Instance::ProcessEvents().
+  void FinishFrames() {
+    if (presenter_) {
+      presenter_->FinishFrames();
+    }
+  }
   bool ok() const;
   const std::string& error() const { return error_; }
 
@@ -28,12 +34,12 @@ class CleanWindow {
 
   void Render(Presenter& presenter);
 
-  std::uint32_t framebuffer_width() const { return surface_ ? surface_->width() : 0; }
-  std::uint32_t framebuffer_height() const { return surface_ ? surface_->height() : 0; }
+  std::uint32_t framebuffer_width() const { return presenter_ ? presenter_->width() : 0; }
+  std::uint32_t framebuffer_height() const { return presenter_ ? presenter_->height() : 0; }
 
  private:
   Window window_;
-  std::optional<WindowSurface> surface_;
+  std::unique_ptr<WindowPresenter> presenter_;
   bool visible_ = false;
   std::string error_;
 };

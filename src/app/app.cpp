@@ -782,14 +782,16 @@ int RunWindowed(const AppOptions& options) {
       pipeline.ShowBlack();
     }
     gpu->instance().ProcessEvents();
+    output.FinishFrames();
+    controls.FinishFrames();
     trace.Mark("events");
     if (tester) {
       phase_stats[phase_index].composed += pipeline.composed - composed_before;
     }
     if (options.trace && trace.TotalMs() > 50.0) {
       char extra[200];
-      const WindowSurface* os = output.surface();
-      const WindowSurface* cs = controls.surface();
+      const WindowPresenter* os = output.presenter();
+      const WindowPresenter* cs = controls.presenter();
       std::snprintf(extra, sizeof(extra),
                     "Output on screen %d acquire %.1f present %.1f | Controls on screen %d acquire %.1f present %.1f",
                     output_on_screen, os ? os->last_acquire_ms() : 0.0, os ? os->last_present_ms() : 0.0,
