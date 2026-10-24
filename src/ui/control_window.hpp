@@ -1,28 +1,63 @@
 #pragma once
 
-// "Relume Controls": the window for the person running Relume. It shows a
-// preview of the OutputTexture (the same texture the Output window shows).
+// "Relume Controls": the window for the person running Relume. Phase 2 UI is
+// deliberately minimal: camera selection, capture/permission status, an
+// Output window toggle and a preview of the OutputTexture (the same texture
+// the Output window shows). ImGui draws only into this window.
 
 #include "app/window.hpp"
+#include "relume/app_state.hpp"
+#include "relume/camera.hpp"
 #include "relume/renderer.hpp"
 
+#include <optional>
+#include <string>
+#include <vector>
+
 namespace relume {
+
+// What the Controls window displays this frame.
+struct ControlsModel {
+  CaptureStatus status;
+  std::vector<CameraDeviceInfo> devices;
+  std::string selected_id;
+  std::string source_description;  // negotiated/delivered format
+  std::string warning;             // e.g. missing colour metadata
+  bool camera_selectable = true;   // false for the file source
+  bool output_visible = true;
+};
+
+// What the user asked for this frame.
+struct ControlsActions {
+  std::optional<std::string> select_device;  // already confirmed for virtual cameras
+  bool toggle_output = false;
+};
 
 class ControlWindow {
  public:
   static constexpr const char* kTitle = "Relume Controls";
 
-  explicit ControlWindow(const GpuContext& gpu);
+  ControlWindow(const GpuContext& gpu, const OutputTexture& output);
+  ~ControlWindow();
+  ControlWindow(const ControlWindow&) = delete;
+  ControlWindow& operator=(const ControlWindow&) = delete;
+
   bool ok() const { return error_.empty(); }
   const std::string& error() const { return error_; }
   bool should_close() const;
-  GLFWwindow* window() const { return window_.get(); }
 
-  void Render(Presenter& presenter);
+  ControlsActions Render(const ControlsModel& model);
 
  private:
+  ControlsActions BuildUi(const ControlsModel& model);
+
+  const GpuContext& gpu_;
+  const OutputTexture& output_;
   Window window_;
   std::optional<WindowSurface> surface_;
+  bool imgui_glfw_ = false;
+  bool imgui_wgpu_ = false;
+  std::string pending_virtual_id_;  // a virtual camera awaiting confirmation
   std::string error_;
 };
 

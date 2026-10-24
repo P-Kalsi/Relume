@@ -47,6 +47,7 @@ relume_set_warnings(relume_render)
 
 # The Relume application.
 relume_fetch_glfw()
+relume_fetch_imgui()
 add_executable(Relume
   main.cpp
   app/app.cpp
@@ -59,7 +60,7 @@ if(APPLE)
   target_link_libraries(Relume PRIVATE "-framework Cocoa" "-framework QuartzCore")
 endif()
 target_include_directories(Relume PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
-target_link_libraries(Relume PRIVATE relume_camera relume_render glfw)
+target_link_libraries(Relume PRIVATE relume_camera relume_render relume_imgui glfw)
 relume_set_warnings(Relume)
 
 # Headless smoke tests: the real pipeline from a file source to the output

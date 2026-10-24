@@ -340,7 +340,7 @@ int RunWindowed(const AppOptions& options) {
   }
   std::printf("GPU: %s\n", gpu->adapter_name().c_str());
   VideoPipeline pipeline(*gpu);
-  ControlWindow controls(*gpu);
+  ControlWindow controls(*gpu, pipeline.output);
   CleanWindow output(*gpu);
   if (!controls.ok() || !output.ok()) {
     std::fprintf(stderr, "FAIL: %s\n", !controls.ok() ? controls.error().c_str() : output.error().c_str());
@@ -357,9 +357,10 @@ int RunWindowed(const AppOptions& options) {
   StatsLogger stats(options.stats_interval_s);
   CaptureStatus status;
   int exit_code = 0;
-  // Vsync normally paces the loop; this floor stops it from spinning a core
-  // when presentation does not block (hidden or occluded windows).
-  constexpr auto kMinIteration = std::chrono::milliseconds(4);
+  // Vsync normally paces the loop (60 Hz here). macOS stops pacing occluded
+  // windows, so this floor caps the loop at about 125 Hz instead of letting
+  // it spin; it is below one 60 Hz frame so it never costs a vsync.
+  constexpr auto kMinIteration = std::chrono::milliseconds(8);
   Clock::time_point iteration_start = Clock::now();
   while (!controls.should_close()) {
     std::this_thread::sleep_until(iteration_start + kMinIteration);
@@ -386,7 +387,15 @@ int RunWindowed(const AppOptions& options) {
       pipeline.ShowBlack();
     }
     output.Render(pipeline.presenter);
-    controls.Render(pipeline.presenter);
+    ControlsModel model;
+    model.status = status;
+    model.source_description = source->description();
+    model.camera_selectable = false;
+    model.output_visible = output.visible();
+    const ControlsActions actions = controls.Render(model);
+    if (actions.toggle_output) {
+      output.visible() ? output.Hide() : output.Show();
+    }
     gpu->instance().ProcessEvents();
 
     const Clock::time_point now = Clock::now();
