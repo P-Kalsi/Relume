@@ -18,3 +18,4 @@ relume_add_gtest(test_camera_format SOURCES test_camera_format.cpp LIBS relume_c
 relume_add_gtest(test_layout SOURCES test_layout.cpp LIBS relume_core)
 relume_add_gtest(test_app_state SOURCES test_app_state.cpp LIBS relume_core)
 relume_add_gtest(test_file_source SOURCES test_file_source.cpp LIBS relume_camera)
+relume_add_gtest(test_gpu_upload SOURCES test_gpu_upload.cpp LIBS relume_render)
