@@ -17,6 +17,10 @@ void MakeWindowOpaque(GLFWwindow* window);
 // Refresh rate of the display showing the window, in Hz (60 if unknown).
 double DisplayRefreshHz(GLFWwindow* window);
 
+// The process's physical memory footprint in MiB, as Activity Monitor's
+// "Memory" column reports it (task_vm_info phys_footprint); -1 if unknown.
+double ProcessFootprintMiB();
+
 // True if this application is the active (frontmost) app.
 bool IsApplicationActive();
 

@@ -148,7 +148,7 @@ class StatsLogger {
         "[stats] capture %.1f fps (timestamp interval p50 %.2f p95 %.2f ms; copy p50 %.2f p95 %.2f ms) | "
         "composed %.1f fps | render loop %.1f fps "
         "(interval p50 %.2f p95 %.2f max %.1f ms) | dropped: pool %llu, unread %llu, driver %llu, invalid %llu, "
-        "rejected %llu\n",
+        "rejected %llu | memory %.1f MiB\n",
         static_cast<double>(capture.frames_received - last_received_) / elapsed, capture.interval_ms_p50,
         capture.interval_ms_p95, capture.copy_ms_p50,
         capture.copy_ms_p95, static_cast<double>(pipeline.composed - last_composed_) / elapsed,
@@ -157,7 +157,7 @@ class StatsLogger {
         static_cast<unsigned long long>(slot_stats.dropped_unread),
         static_cast<unsigned long long>(capture.dropped_driver),
         static_cast<unsigned long long>(capture.dropped_invalid),
-        static_cast<unsigned long long>(pipeline.rejected));
+        static_cast<unsigned long long>(pipeline.rejected), ProcessFootprintMiB());
     std::fflush(stdout);
     last_ = now;
     last_received_ = capture.frames_received;

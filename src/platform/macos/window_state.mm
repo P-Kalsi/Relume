@@ -1,6 +1,7 @@
 #include "platform/window_state.hpp"
 
 #import <Cocoa/Cocoa.h>
+#include <mach/mach.h>
 
 #define GLFW_EXPOSE_NATIVE_COCOA
 #include <GLFW/glfw3.h>
@@ -30,6 +31,15 @@ double DisplayRefreshHz(GLFWwindow* window) {
   NSScreen* screen = ns_window != nil && ns_window.screen != nil ? ns_window.screen : NSScreen.mainScreen;
   const NSInteger fps = screen != nil ? screen.maximumFramesPerSecond : 0;
   return fps > 0 ? static_cast<double>(fps) : 60.0;
+}
+
+double ProcessFootprintMiB() {
+  task_vm_info_data_t info{};
+  mach_msg_type_number_t count = TASK_VM_INFO_COUNT;
+  if (task_info(mach_task_self(), TASK_VM_INFO, reinterpret_cast<task_info_t>(&info), &count) != KERN_SUCCESS) {
+    return -1.0;
+  }
+  return static_cast<double>(info.phys_footprint) / (1024.0 * 1024.0);
 }
 
 bool IsApplicationActive() { return NSApp.isActive; }
