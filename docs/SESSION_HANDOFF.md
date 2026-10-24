@@ -1,100 +1,46 @@
-# Session handoff: end of Phase 1 (2026-10-23)
+# Session handoff: end of Phase 2 (2026-10-24)
 
 ## Git state
-- **Branch:** `main`, **7 commits ahead of `origin/main`, not pushed.** The working tree was clean at `126a9be` before this handoff.
-- **Phase 0:**
-  - `532cf54` dependency bootstrap
-  - `6acad1d` probes and presets
-  - `8306612` docs
-- **Phase 1:**
-  - `f1743b5` Python environment
-  - `309e40e` preprocessing contract
-  - `f1cb7e3` ONNX export
-  - `720a0fe` parity
-  - `0b4aafc` preprocessing comparison
-  - `e271af7` docs
-  - `126a9be` strip local paths from the ONNX file
+- **Branch:** `main`. Phase 2 commits are local and **not pushed**.
+- Correction to the Phase 1 handoff: Phase 0 and 1 *were* already on `origin/main` (up to `5bb80ad`).
+- **Phase 2 commits:**
+  - `20328e3` build: GLFW pin shared, GoogleTest 1.17.0
+  - `453f434` VideoFrame and CPU conversions
+  - `3d37a64` frame pool and latest-frame slot
+  - `a552c5b` format negotiation, aspect fit, status
+  - `fb1e06e` file source
+  - `81ac2a6` Dawn upload, NV12 conversion, blit
+  - `7045522` Controls/Output windows and headless smoke tests
+  - `4c91aea` Dear ImGui 1.93.0 pin
+  - `adce000` minimal Controls UI
+  - `7c6fee5` Relume.app bundle and optional signing identity
+  - `5c78aad` AVFoundation capture and device handling
+  - plus a docs commit
 
-## What is done
+## What is done (Phase 2 of PRD §8)
+- **App:** `Relume.app` (`dev.relume.app`) has a Relume Controls window (ImGui: camera dropdown, status, Output toggle, preview) and a clean Relume Output window. Both present one fixed 1280×720 `OutputTexture`.
+- **AVFoundation source:** the device format and output pixel format are negotiated separately. Delivered: 1280×720 `420v` @ 30.0 fps on the FaceTime HD camera, unmirrored, verified on the first frame.
+- **File source:** PPM or a generated orientation pattern, encoded as BGRA, RGB or NV12; used for headless tests.
+- **WGSL conversion:** NV12, BGRA and RGB to RGBA. It matches the CPU reference exactly (0 differing values; tolerance ±1).
+- **Tests:** 77 CTest tests pass on the debug, release, asan and tsan presets.
+- **User-confirmed:** orientation, aspect and resizing, clean output, NV12 vs BGRA colour parity, camera switching, and disconnect leading to "Camera unavailable" with black output.
+- Full results: `docs/decisions.md`, Phase 2 section.
 
-**Phase 0 (feasibility), all gates passed.** It consists of three probe programs in `probes/`, not application code.
-- `dawn_hello` draws a textured quad in a GLFW window, which the user visually confirmed. Its `--offscreen` mode is a CTest pixel-readback test.
-- `ort_probe` lists ORT 1.31.0 execution providers (CoreML, WebGPU, CPU). It confirms only that CoreML *registers*.
-- `camera_probe` is an AVFoundation `.app`. After the user allowed access, it captured BGRA frames at about 30 FPS. The denied-permission path was also tested.
-- The `debug`, `release`, `asan` and `tsan` presets all build and pass.
+## Open items (not verified; do not claim)
+1. **Denied-permission path, live (M5).** Needs the user's explicit approval before changing or resetting camera permission. Never run `tccutil reset` automatically.
+2. **Automatic reconnect of the same camera** (unit-tested only).
+3. **5-minute ASan live stability run (M10).**
+4. **Signing with a real local certificate** (none exists; the user creates it; see `docs/signing.md`).
+5. **OBS Virtual Camera exclusion with OBS installed** (OBS is not installed; unit-tested only).
+6. **About 1 s render stall on Output-window occlusion changes** (`CAMetalLayer.nextDrawable` timeout). Root cause logged by the `[surface]` diagnostic; fix candidates are listed in decisions.md, intended for Phase 5.
+7. Still open from Phase 1: **letterbox vs stretch** must be decided on local webcam frames with faces **before Phase 3**.
 
-**Phase 1 (model reproducibility), all gates passed.**
-- **Checkpoint:** Depth-Anything-V2-Small (Apache-2.0), HF revision `03876f86…`, SHA-256 `715fade1…`. Upstream code pinned at `a561b849…`.
-- **ONNX:** `models/depth_anything_v2_small_448.onnx` (git-ignored), SHA-256 `6ca89260…`.
-  - Signature: `image` f32[1,3,448,448] → `depth` f32[1,448,448]; opset 18, IR 10.
-  - Byte-reproducible across runs, checkout locations and Python 3.14/3.12, all verified from fresh clones.
-- **Output:** relative, disparity-like depth; **larger = nearer** (the user confirmed this visually); values ≥ 0 because of an in-graph ReLU. Far regions are often exactly 0.
-- **Parity (PyTorch CPU vs ORT CPU, identical tensors, 22 comparisons):**
-  - Worst relative max 3.3e-5, against a 1e-3 ceiling.
-  - Worst mean error ÷ range 1.4e-6, against a 1e-4 ceiling.
-- **Tests:** 75 pytest cases pass, and CTest passes 4/4 in debug and release.
-- **CPU latency (p50 across runs):** PyTorch 316–319 ms and ORT 328–332 ms per inference, roughly 3 FPS.
+## Rules learned this phase
+- Every rebuild changes the ad-hoc signature, so macOS asks for camera permission again. Tell the user before each camera launch.
+- Launch the app with `open` (see `docs/build.md`). The file source and `--headless` never touch AVFoundation, so they can run directly.
+- macOS has no `AVCaptureSessionPresetInputPriority`. Use `activeFormat` on the locked device.
+- `std::jthread` needs `-fexperimental-library` on Apple libc++ 18, so it is not used.
+- `imgui_impl_wgpu.cpp` must be compiled as Objective-C++ without ARC.
 
-## Decisions to keep (see `docs/decisions.md`, `docs/model.md`)
-- **Minimum macOS 14.0**, because ORT 1.31.0's dylib requires it.
-- **Dawn:** built from source at the pinned commit, Metal backend only.
-- **ORT CMake:** consumed through our own `cmake/FindOnnxRuntime.cmake`, because the package's config is broken.
-- **Preprocessing contract** (`scripts/relume_model/preprocess.py`), **provisional:**
-  - RGB uint8 → /255 → letterbox (`s = 448/max(W,H)`, round half to even, centred)
-  - bilinear resize, half-pixel centres, clamped edges, horizontal pass first
-  - ImageNet-mean padding, which becomes exactly 0 after normalization
-  - ImageNet normalization, then NCHW float32
-  - The inverse is `depth_to_source`.
-- **Parity tolerances:** committed in `scripts/relume_model/tolerances.py`. They are never raised automatically.
-
-## Unresolved (do not silently decide)
-1. **Letterbox vs stretch is undecided.** On upstream demo images, stretch agreed more closely with upstream preprocessing on 9 of 10 images. No faces have been tested.
-   - The user's decision: before **Phase 3**, compare the two on local webcam frames with faces, hair, shoulders and varied lighting.
-   - Frames go in `third_party/assets/local_frames/` (git-ignored); the script is `scripts/compare_preprocessing.py`.
-   - Change the contract only if that comparison gives a clear reason.
-2. **CoreML execution is unverified.** No model has been run on the CoreML EP, and no node placement or speed has been measured. That is Phase 3.
-3. **Camera format:** asking for the 1280×720 preset returned **1920×1080** frames. Phase 2 must set the format explicitly (`activeFormat` or output settings) and test the result.
-4. **Camera permission resets on every rebuild,** because the ad-hoc signature changes. A stable signing identity is open for Phase 2.
-5. **C++ unit-test framework not chosen yet.** The Phase 0 probes are the only C++ tests. The PRD lists `tests/test_frame_queue.cpp` and similar files, so a framework needs choosing, with approval for any new dependency.
-6. **Repository layout differs from PRD §7.**
-   - There is no `include/relume/` or `src/` yet; the code so far is `probes/` plus `scripts/relume_model/`.
-   - Fixtures are generated in code rather than stored in `tests/fixtures/`.
-   - Phase 2 should introduce `src/` and `include/relume/` as the PRD lays out.
-
-## Past failures to avoid repeating
-- **Apple clang 15 can't build Dawn** (C++20 aggregate CTAD). Use CLT 16+.
-- **Stale libc++ 13 headers** in `/Library/Developer/CommandLineTools/usr/include/c++` once shadowed the SDK. If libc++ errors look odd, check that `_LIBCPP_VERSION` is 180100 or newer.
-- **CMake must enable `OBJC` as well as `OBJCXX`,** or GLFW's `.m` files get compiled as Objective-C++.
-- **`DawnConfig.cmake` doesn't load Threads,** so call `find_package(Threads)` before `find_package(Dawn)`.
-- **python.org Python has no CA certificates,** so `scripts/fetch_assets.py` downloads with `curl`.
-- **torch.onnx embeds absolute paths** in node `pkg.torch.onnx.stack_trace`. `export.py` strips them, and a test enforces it.
-- **`screencapture` can't see other apps' windows** without Screen Recording permission. Visual checks need the user.
-- **Don't launch the camera app without telling the user first.** An unannounced prompt led to a "Don't Allow" earlier.
-
-## Phase 2 per PRD §8 (not started)
-**Deliverable:**
-- an AVFoundation camera source plus a file source (for headless tests)
-- upload and conversion into Dawn
-- a **Relume Controls** window and a clean **Relume Output** window (16:9 video only), both showing **passthrough** video at first
-
-**Gate:**
-- the camera renders with correct aspect ratio and orientation
-- no crashes when permission is denied or no camera is present
-- the video-only output surface exists
-
-**Related requirements:**
-- PRD §4.1: camera enumeration and selection; 1280×720 at 30 FPS negotiated; BGRA/NV12/RGB conversions explicitly tested; never auto-select OBS Virtual Camera; status labels; disconnect and reconnect.
-- PRD §4.5: two surfaces sharing one processed frame.
-- PRD §5: non-blocking camera callback, bounded latest-frame queue.
-- PRD §7: interfaces carry frame ID, timestamp, size, pixel format and alignment.
-
-No inference in Phase 2; inference is Phase 3.
-
-## Read first in a new session
-`CLAUDE.md`, then this file, then PRD §4.1, §4.5, §5, §7 and §8, then `docs/decisions.md`, then `docs/build.md`.
-
-Then these sources:
-- `CMakeLists.txt`, `CMakePresets.json`, `cmake/`
-- `probes/camera_probe/main.mm` (AVFoundation patterns)
-- `probes/dawn_hello/main.cpp` and `metal_layer.mm` (Dawn/GLFW surface patterns)
-- `scripts/relume_model/preprocess.py` (contract that C++ must match later)
+## Next: Phase 3 (not started)
+Native ORT C++ CPU inference, a side-by-side depth debug view, then CoreML EP verification. Decide letterbox vs stretch first (open item 7).

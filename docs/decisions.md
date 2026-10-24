@@ -124,3 +124,84 @@ Details and numbers: `docs/model.md`.
   preprocessing comparison needs real local frames.
 - **The `.gitignore` issue from Phase 0 is fixed.** `models/` now ignores
   everything except `README.md` and `*.manifest.json`.
+
+## Phase 2 — Live camera renderer (2026-10-24)
+
+Architecture details: `docs/architecture.md`. Signing: `docs/signing.md`.
+
+### Decisions
+
+- **New pinned dependencies (approved).** Both are fetched with FetchContent,
+  SHA-256 pinned, and listed in `docs/dependencies.md`.
+  - **GoogleTest 1.17.0** for native unit tests.
+  - **Dear ImGui 1.93.0** for the Controls window. A standalone gate compiled
+    its GLFW and WebGPU (Dawn) backends against the pinned Dawn and GLFW 3.4
+    and rendered offscreen with no WebGPU errors. On macOS,
+    `imgui_impl_wgpu.cpp` must be compiled as Objective-C++ without ARC, as
+    upstream documents.
+- **Frames are copied out of the CVPixelBuffer in the callback** into pooled
+  buffers. That returns the buffer to AVFoundation at once and keeps the
+  interface portable. Measured copy time is p50 0.6 ms and p95 0.9 ms for
+  1280×720 NV12.
+- **Device format and output pixel format are chosen separately**
+  (`SelectFormat`, `ChooseOutputPixelFormat`). The delivered format is then
+  verified on the first frame.
+- **No session preset.** macOS lacks `AVCaptureSessionPresetInputPriority`.
+  Setting `activeFormat` on the locked device, locked across `startRunning`,
+  delivered exactly 1280×720 @ 30 fps. That fixes the Phase 0 issue, where
+  the 720p preset gave 1080p.
+- **Native NV12 is the default output**, converted in WGSL. With
+  `--pixel-format bgra`, AVFoundation converts instead.
+- **NV12 chroma is nearest-neighbour**, a documented approximation (see
+  architecture.md). The GPU matched the CPU reference with 0 differing
+  values; the tolerance is ±1, fixed in advance.
+- **Chroma location and matrix are read per buffer.** The FaceTime HD
+  Camera reports *top-left* chroma; the iPhone Continuity Camera reports
+  *left*. Both report BT.709 and video range (`420v`).
+- **A fixed 1280×720 OutputTexture is the output contract.** Both windows
+  present it; window framebuffers never change it.
+- **Status is derived from facts each frame** (`DeriveStatus`) rather than
+  from a separate state machine.
+- **The output is black whenever capture isn't live**, never a frozen frame.
+- **Unmirrored orientation.** The user confirmed that text reads correctly
+  and a raised right hand appears on the viewer's left.
+- **The render loop has an 8 ms floor** (about 125 Hz at most), because
+  macOS stops vsync-pacing occluded windows. It is below one 60 Hz frame, so
+  it never costs a vsync.
+- **`std::jthread` is not used**: Apple's libc++ 18 provides it only with
+  `-fexperimental-library`. Threads are `std::thread`, always joined.
+- **Ad-hoc signing stays the default.** `RELUME_CODESIGN_IDENTITY` is
+  optional and checked at configure time.
+
+### Results on the development Mac
+
+| Check | Result |
+|---|---|
+| Automated tests (debug, release, asan, tsan) | 77/77 pass on each preset, no warnings in Relume targets |
+| GPU vs CPU colour conversion | Exact for BGRA8 and RGB8; NV12 0 differing values (tolerance ±1) |
+| Headless smoke (file source → output → window-sized target) | Pass for 1280×720 BGRA, 640×480 NV12 (pillarbox), 480×640 RGB |
+| Live negotiated/delivered format (FaceTime HD) | `420v` 1280×720 @ 30 fps; delivered 1280×720 NV12 video range, stride 1280/1280, BT.709, chroma top-left |
+| Live capture rate | 30.0 fps; timestamp interval p50/p95 33.4/33.4 ms; no driver or pool drops |
+| Render loop | 60 fps with both windows vsync-paced (p50 interval 16.7 ms) |
+| Output window framebuffer | 1280×720 px on the 2× display |
+| Permission prompt (first launch) | The UI kept rendering while waiting; Allow led to Live |
+| Orientation, aspect, resizing, clean output (user) | Correct, never stretched, video only |
+| NV12 vs BGRA colours (user) | Identical to the eye |
+| Camera switching (FaceTime ↔ iPhone) | Works within one run |
+| Selected camera disconnected (iPhone) | Capture stopped, "Camera unavailable", black output (user confirmed) |
+| Bogus `--camera` ID | "Camera unavailable", no crash, clean exit |
+
+### Known issues and limitations
+
+- **About 1 s render stalls on window occlusion changes.** `[surface] Relume Output waited ~1000 ms for a drawable` was logged.
+  - Cause: `CAMetalLayer.nextDrawable` blocks for up to 1 s when no drawable is free, which happens when the Output window's occlusion changes (for example, the Controls window raised over it).
+  - Seen once per affected run, after which the loop recovers. Capture continues; about 30 frames are dropped as unread.
+  - Candidate fixes for Phase 5: present each window without blocking the other (separate present thread, or skip-and-retry on occlusion notifications), checked against OBS capture of occluded windows.
+- **Not verified live:**
+  - automatic reconnect of the *same* camera (unit-tested only)
+  - the denied-permission path (M5; it needs the user's approval to change camera permission)
+  - the 5-minute ASan stability run (M10)
+  - signing with a real local certificate
+  - exclusion of OBS Virtual Camera with OBS installed (unit-tested only; OBS is not installed)
+- **Capture timestamps** are recorded on the CoreMedia host-time clock. They are not compared with `steady_clock`, and no end-to-end latency is claimed.
+- **Camera permission is requested again after every rebuild** with ad-hoc signing. `docs/signing.md` explains the optional fix.

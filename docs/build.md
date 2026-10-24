@@ -60,7 +60,39 @@ CTest runs:
   only when `.venv` exists (`RELUME_PYTHON_TESTS`). The artifact suite
   fails, with instructions, if `scripts/export.py` has not been run.
 
-## 3. Manual probes
+CTest also runs the native GoogleTest suites (`tests/cpp/`). They cover
+frame queue, pixel conversion, format negotiation, layout, status and file
+source; offscreen Dawn tests compare GPU output against the CPU reference.
+It also runs three `app_headless_smoke_*` tests: the real pipeline from the
+file source, checked pixel by pixel. None of these needs a camera.
+
+## 3. Run Relume
+
+```sh
+# Camera (launch the bundle with `open` so macOS attributes the camera
+# prompt to Relume; approve it). Logs go to relume.log.
+open -W -n --stdout "$PWD/relume.log" --stderr "$PWD/relume.log" \
+  build/debug/src/Relume.app --args --seconds 60 && cat relume.log
+
+# Useful options (pass after --args):
+#   --pixel-format nv12|bgra   capture output format (default nv12)
+#   --camera <unique-id>       a specific camera (IDs are listed in the log)
+#   --seconds <S> / --frames <N> / --stats <interval-s>
+
+# File source (no camera, no permission; can be run directly)
+build/debug/src/Relume.app/Contents/MacOS/Relume --source file --pixel-format nv12
+build/debug/src/Relume.app/Contents/MacOS/Relume --headless --source file --pattern 640x480 --pixel-format nv12
+```
+
+Two windows open: **Relume Controls** (camera choice, status, Output toggle
+and preview) and **Relume Output** (video only, for OBS window capture in
+Phase 7). Closing Controls quits; closing Output only hides it.
+
+Relume.app is signed ad-hoc by default, so macOS asks for camera permission
+again after each rebuild. See `docs/signing.md` for an optional stable local
+identity (`-DRELUME_CODESIGN_IDENTITY=...`).
+
+## 4. Manual probes
 
 ```sh
 # Dawn window with the textured quad (close the window to exit)
