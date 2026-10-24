@@ -58,6 +58,12 @@ if(APPLE)
   target_sources(Relume PRIVATE platform/macos/surface.mm)
   target_compile_options(Relume PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
   target_link_libraries(Relume PRIVATE "-framework Cocoa" "-framework QuartzCore")
+  # An .app bundle, so macOS privacy (TCC) attributes the camera request to
+  # Relume and reads NSCameraUsageDescription. Launch it with `open`.
+  set_target_properties(Relume PROPERTIES
+    MACOSX_BUNDLE ON
+    MACOSX_BUNDLE_INFO_PLIST "${PROJECT_SOURCE_DIR}/app/Info.plist")
+  relume_codesign(Relume)
 endif()
 target_include_directories(Relume PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 target_link_libraries(Relume PRIVATE relume_camera relume_render relume_imgui glfw)

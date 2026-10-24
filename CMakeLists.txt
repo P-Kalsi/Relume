@@ -23,6 +23,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Sanitizers)
 include(Warnings)
 include(Dependencies)
+include(CodeSign)
 
 option(RELUME_BUILD_ORT_PROBE "Build the ONNX Runtime provider probe" ON)
 option(RELUME_BUILD_DAWN_PROBE "Build the Dawn textured-quad probe" ON)
