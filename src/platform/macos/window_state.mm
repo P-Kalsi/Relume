@@ -25,6 +25,13 @@ void MakeWindowOpaque(GLFWwindow* window) {
   ns_window.contentView.layer.opaque = YES;
 }
 
+double DisplayRefreshHz(GLFWwindow* window) {
+  NSWindow* ns_window = glfwGetCocoaWindow(window);
+  NSScreen* screen = ns_window != nil && ns_window.screen != nil ? ns_window.screen : NSScreen.mainScreen;
+  const NSInteger fps = screen != nil ? screen.maximumFramesPerSecond : 0;
+  return fps > 0 ? static_cast<double>(fps) : 60.0;
+}
+
 bool IsApplicationActive() { return NSApp.isActive; }
 
 }  // namespace relume

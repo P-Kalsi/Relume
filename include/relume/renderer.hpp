@@ -54,6 +54,9 @@ class GpuContext {
   const wgpu::Queue& queue() const { return queue_; }
   const GpuErrorLog& errors() const { return *errors_; }
   const std::string& adapter_name() const { return adapter_name_; }
+  // True if the device was created with the features that IOSurface window
+  // presentation needs (SharedTextureMemoryIOSurface, SharedFenceMTLSharedEvent).
+  bool supports_layer_presentation() const { return supports_layer_presentation_; }
 
   // Waits for all submitted work to finish (tests and shutdown only).
   bool WaitIdle();
@@ -66,6 +69,7 @@ class GpuContext {
   wgpu::Device device_;
   wgpu::Queue queue_;
   std::string adapter_name_;
+  bool supports_layer_presentation_ = false;
 };
 
 // The fixed-size clean video output. Its size never follows any window.

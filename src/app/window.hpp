@@ -103,4 +103,14 @@ class SurfacePresenter final : public WindowPresenter {
   bool needs_configure_ = true;
 };
 
+enum class PresenterKind : std::uint8_t {
+  kLayer,    // IOSurface + Core Animation; never acquires a CAMetalDrawable
+  kSurface,  // wgpu::Surface on a CAMetalLayer (fallback)
+};
+
+// Creates the requested presenter for `window`. If kLayer is unavailable it
+// falls back to kSurface and says why in `note`.
+std::unique_ptr<WindowPresenter> CreateWindowPresenter(const GpuContext& gpu, GLFWwindow* window,
+                                                       PresenterKind kind, std::string& note);
+
 }  // namespace relume

@@ -7,7 +7,7 @@
 
 namespace relume {
 
-CleanWindow::CleanWindow(const GpuContext& gpu)
+CleanWindow::CleanWindow(const GpuContext& gpu, PresenterKind kind)
     : window_(static_cast<int>(OutputTexture::kWidth), static_cast<int>(OutputTexture::kHeight), kTitle, false) {
   if (window_.get() == nullptr) {
     error_ = "could not create the Output window";
@@ -23,7 +23,11 @@ CleanWindow::CleanWindow(const GpuContext& gpu)
   const int height = static_cast<int>(std::lround(static_cast<float>(OutputTexture::kHeight) / scale_y));
   glfwSetWindowSize(window_.get(), width, height);
   glfwSetWindowAspectRatio(window_.get(), 16, 9);
-  presenter_ = std::make_unique<SurfacePresenter>(gpu, window_.get());
+  std::string note;
+  presenter_ = CreateWindowPresenter(gpu, window_.get(), kind, note);
+  if (!note.empty()) {
+    std::printf("%s: %s\n", kTitle, note.c_str());
+  }
   if (!presenter_->ok()) {
     error_ = presenter_->error();
   }

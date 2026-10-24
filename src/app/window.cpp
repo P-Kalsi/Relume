@@ -1,5 +1,6 @@
 #include "app/window.hpp"
 
+#include "platform/layer_presenter.hpp"
 #include "platform/surface.hpp"
 
 #include <GLFW/glfw3.h>
@@ -129,6 +130,18 @@ void SurfacePresenter::Present() {
   const auto start = std::chrono::steady_clock::now();
   surface_.Present();
   last_present_ms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+}
+
+std::unique_ptr<WindowPresenter> CreateWindowPresenter(const GpuContext& gpu, GLFWwindow* window,
+                                                       PresenterKind kind, std::string& note) {
+  if (kind == PresenterKind::kLayer) {
+    std::string error;
+    if (std::unique_ptr<WindowPresenter> layer = CreateLayerPresenter(gpu, window, error)) {
+      return layer;
+    }
+    note = "IOSurface presentation unavailable (" + error + "); using the CAMetalLayer surface";
+  }
+  return std::make_unique<SurfacePresenter>(gpu, window);
 }
 
 }  // namespace relume

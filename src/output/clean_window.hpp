@@ -14,7 +14,7 @@ class CleanWindow {
  public:
   static constexpr const char* kTitle = "Relume Output";
 
-  explicit CleanWindow(const GpuContext& gpu);
+  CleanWindow(const GpuContext& gpu, PresenterKind kind);
   GLFWwindow* window() const { return window_.get(); }
   const WindowPresenter* presenter() const { return presenter_.get(); }
   // Hands finished frames to the window; call after Instance::ProcessEvents().

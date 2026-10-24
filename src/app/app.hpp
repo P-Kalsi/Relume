@@ -1,5 +1,6 @@
 #pragma once
 
+#include "app/window.hpp"
 #include "relume/file_source.hpp"
 
 #include <cstdint>
@@ -18,6 +19,7 @@ struct AppOptions {
   std::uint64_t frames = 0;               // stop after this many composed frames (0 = run until closed)
   double seconds = 0.0;                   // stop after this long (0 = run until closed)
   double stats_interval_s = 5.0;          // stats log period (0 = off)
+  PresenterKind presenter = PresenterKind::kLayer;  // window presentation path
   bool trace = false;                     // log the phases of slow render-loop iterations
   bool occlusion_test = false;            // cover/uncover the windows on a schedule and check the loop
 };

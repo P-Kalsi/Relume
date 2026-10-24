@@ -49,9 +49,20 @@
     { "name": "tsan", "configurePreset": "tsan" }
   ],
   "testPresets": [
-    { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true } },
-    { "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true } },
-    { "name": "asan", "configurePreset": "asan", "output": { "outputOnFailure": true } },
-    { "name": "tsan", "configurePreset": "tsan", "output": { "outputOnFailure": true } }
+    { "name": "debug", "configurePreset": "debug", "output": { "outputOnFailure": true },
+      "filter": { "exclude": { "label": "display" } } },
+    { "name": "release", "configurePreset": "release", "output": { "outputOnFailure": true },
+      "filter": { "exclude": { "label": "display" } } },
+    { "name": "asan", "configurePreset": "asan", "output": { "outputOnFailure": true },
+      "filter": { "exclude": { "label": "display" } } },
+    { "name": "tsan", "configurePreset": "tsan", "output": { "outputOnFailure": true },
+      "filter": { "exclude": { "label": "display" } } },
+    {
+      "name": "display",
+      "displayName": "Debug: tests that open windows (needs a logged-in GUI session)",
+      "configurePreset": "debug",
+      "output": { "outputOnFailure": true },
+      "filter": { "include": { "label": "display" } }
+    }
   ]
 }

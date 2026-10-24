@@ -211,6 +211,15 @@ std::unique_ptr<GpuContext> GpuContext::Create(std::string& error) {
 
   GpuErrorLog* log = gpu->errors_.get();
   wgpu::DeviceDescriptor device_desc{};
+  // Optional: needed only by the IOSurface window presenter.
+  const std::array<wgpu::FeatureName, 2> layer_features = {wgpu::FeatureName::SharedTextureMemoryIOSurface,
+                                                           wgpu::FeatureName::SharedFenceMTLSharedEvent};
+  gpu->supports_layer_presentation_ =
+      gpu->adapter_.HasFeature(layer_features[0]) && gpu->adapter_.HasFeature(layer_features[1]);
+  if (gpu->supports_layer_presentation_) {
+    device_desc.requiredFeatureCount = layer_features.size();
+    device_desc.requiredFeatures = layer_features.data();
+  }
   device_desc.SetDeviceLostCallback(
       wgpu::CallbackMode::AllowSpontaneous,
       [log](const wgpu::Device&, wgpu::DeviceLostReason reason, wgpu::StringView message) {

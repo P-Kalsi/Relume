@@ -3,6 +3,8 @@
 #include "relume/layout.hpp"
 
 #include <GLFW/glfw3.h>
+
+#include <cstdio>
 #include <imgui.h>
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_wgpu.h>
@@ -34,13 +36,17 @@ std::string DeviceLabel(const CameraDeviceInfo& device) {
 
 }  // namespace
 
-ControlWindow::ControlWindow(const GpuContext& gpu, const OutputTexture& output)
+ControlWindow::ControlWindow(const GpuContext& gpu, const OutputTexture& output, PresenterKind kind)
     : gpu_(gpu), output_(output), window_(960, 640, kTitle, true) {
   if (window_.get() == nullptr) {
     error_ = "could not create the Controls window";
     return;
   }
-  presenter_ = std::make_unique<SurfacePresenter>(gpu, window_.get());
+  std::string note;
+  presenter_ = CreateWindowPresenter(gpu, window_.get(), kind, note);
+  if (!note.empty()) {
+    std::printf("%s: %s\n", kTitle, note.c_str());
+  }
   if (!presenter_->ok()) {
     error_ = presenter_->error();
     return;

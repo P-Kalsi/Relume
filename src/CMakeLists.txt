@@ -65,9 +65,10 @@ add_executable(Relume
   output/clean_window.cpp
   ui/control_window.cpp)
 if(APPLE)
-  target_sources(Relume PRIVATE platform/macos/surface.mm platform/macos/window_state.mm)
+  target_sources(Relume PRIVATE
+    platform/macos/surface.mm platform/macos/window_state.mm platform/macos/layer_presenter.mm)
   target_compile_options(Relume PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
-  target_link_libraries(Relume PRIVATE "-framework Cocoa" "-framework QuartzCore")
+  target_link_libraries(Relume PRIVATE "-framework Cocoa" "-framework QuartzCore" "-framework IOSurface")
   # An .app bundle, so macOS privacy (TCC) attributes the camera request to
   # Relume and reads NSCameraUsageDescription. Launch it with `open`.
   set_target_properties(Relume PROPERTIES
@@ -89,3 +90,11 @@ add_test(NAME app_headless_smoke_rgb_tall
   COMMAND Relume --headless --source file --pattern 480x640 --pixel-format rgb --frames 10)
 set_tests_properties(app_headless_smoke_bgra_720p app_headless_smoke_nv12_4x3 app_headless_smoke_rgb_tall
   PROPERTIES TIMEOUT 60)
+
+# Window occlusion regression test: opens real windows, covers, resizes and
+# minimizes them for about a minute, and fails if presentation ever blocks.
+# It needs a logged-in GUI session, so it carries the `display` label, which
+# the default test presets exclude (run it with `ctest --preset display`).
+add_test(NAME app_window_occlusion
+  COMMAND Relume --source file --pixel-format nv12 --occlusion-test --stats 0)
+set_tests_properties(app_window_occlusion PROPERTIES TIMEOUT 180 LABELS display)

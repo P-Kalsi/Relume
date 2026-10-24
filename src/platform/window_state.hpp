@@ -14,6 +14,9 @@ bool IsWindowOnScreen(GLFWwindow* window);
 // (used by the occlusion test's covering window, which draws nothing).
 void MakeWindowOpaque(GLFWwindow* window);
 
+// Refresh rate of the display showing the window, in Hz (60 if unknown).
+double DisplayRefreshHz(GLFWwindow* window);
+
 // True if this application is the active (frontmost) app.
 bool IsApplicationActive();
 

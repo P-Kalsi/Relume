@@ -37,7 +37,7 @@ class ControlWindow {
  public:
   static constexpr const char* kTitle = "Relume Controls";
 
-  ControlWindow(const GpuContext& gpu, const OutputTexture& output);
+  ControlWindow(const GpuContext& gpu, const OutputTexture& output, PresenterKind kind);
   ~ControlWindow();
   ControlWindow(const ControlWindow&) = delete;
   ControlWindow& operator=(const ControlWindow&) = delete;
