@@ -22,15 +22,20 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Sanitizers)
 include(Warnings)
+include(Dependencies)
 
 option(RELUME_BUILD_ORT_PROBE "Build the ONNX Runtime provider probe" ON)
 option(RELUME_BUILD_DAWN_PROBE "Build the Dawn textured-quad probe" ON)
 option(RELUME_BUILD_CAMERA_PROBE "Build the AVFoundation camera probe (macOS only)" ${APPLE})
+option(RELUME_BUILD_TESTS "Build the native C++ unit tests (GoogleTest)" ON)
 
 enable_testing()
 
-# Phase 0 contains only feasibility probes; the application itself starts in
-# later phases (see RELUME_PRD_REVISED.md §8).
+if(RELUME_BUILD_TESTS)
+  add_subdirectory(tests/cpp)
+endif()
+
+# Phase 0 feasibility probes.
 if(RELUME_BUILD_ORT_PROBE)
   add_subdirectory(probes/ort_probe)
 endif()
