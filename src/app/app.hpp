@@ -18,6 +18,8 @@ struct AppOptions {
   std::uint64_t frames = 0;               // stop after this many composed frames (0 = run until closed)
   double seconds = 0.0;                   // stop after this long (0 = run until closed)
   double stats_interval_s = 5.0;          // stats log period (0 = off)
+  bool trace = false;                     // log the phases of slow render-loop iterations
+  bool occlusion_test = false;            // cover/uncover the windows on a schedule and check the loop
 };
 
 // Parses command-line arguments. Returns nullopt and sets `error` (which may

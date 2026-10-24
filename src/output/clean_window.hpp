@@ -15,6 +15,8 @@ class CleanWindow {
   static constexpr const char* kTitle = "Relume Output";
 
   explicit CleanWindow(const GpuContext& gpu);
+  GLFWwindow* window() const { return window_.get(); }
+  const WindowSurface* surface() const { return surface_ ? &*surface_ : nullptr; }
   bool ok() const;
   const std::string& error() const { return error_; }
 

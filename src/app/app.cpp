@@ -2,6 +2,7 @@
 
 #include "app/window.hpp"
 #include "output/clean_window.hpp"
+#include "platform/window_state.hpp"
 #include "relume/app_state.hpp"
 #include "relume/camera.hpp"
 #include "relume/event_queue.hpp"
@@ -39,7 +40,10 @@ constexpr char kUsage[] =
     "  --headless                no windows: render offscreen and check the output (file source only)\n"
     "  --frames <N>              stop after N composed frames\n"
     "  --seconds <S>             stop after S seconds (windowed)\n"
-    "  --stats <seconds>         stats log interval, 0 to disable (default 5)\n";
+    "  --stats <seconds>         stats log interval, 0 to disable (default 5)\n"
+    "  --trace                   log the phases of render-loop iterations slower than 50 ms\n"
+    "  --occlusion-test          cover/uncover each window on a schedule, then check that the\n"
+    "                            loop never stalled and the output kept updating (exit 0/1)\n";
 
 using Clock = std::chrono::steady_clock;
 
@@ -345,6 +349,157 @@ const char* PermissionName(PermissionState permission) {
   return "unknown";
 }
 
+
+// Times the phases of one render-loop iteration (main thread).
+class IterationTrace {
+ public:
+  void Begin() {
+    count_ = 0;
+    start_ = Clock::now();
+  }
+  void Mark(const char* phase) {
+    if (count_ < phases_.size()) {
+      phases_[count_++] = {phase, Clock::now()};
+    }
+  }
+  double TotalMs() const {
+    return count_ == 0 ? 0.0 : std::chrono::duration<double, std::milli>(phases_[count_ - 1].second - start_).count();
+  }
+  void Print(double since_start_s, const char* extra) const {
+    std::printf("[trace] t=%.2fs iteration %.1f ms:", since_start_s, TotalMs());
+    Clock::time_point previous = start_;
+    for (std::size_t i = 0; i < count_; ++i) {
+      std::printf(" %s %.1f", phases_[i].first,
+                  std::chrono::duration<double, std::milli>(phases_[i].second - previous).count());
+      previous = phases_[i].second;
+    }
+    std::printf(" | %s\n", extra);
+    std::fflush(stdout);
+  }
+
+ private:
+  Clock::time_point start_;
+  std::array<std::pair<const char*, Clock::time_point>, 16> phases_{};
+  std::size_t count_ = 0;
+};
+
+// Logs when a window's on-screen visibility (macOS occlusion state) changes.
+class OcclusionLog {
+ public:
+  OcclusionLog(const char* name, GLFWwindow* window) : name_(name), window_(window) {}
+  bool Update(double since_start_s) {
+    const bool on_screen = IsWindowOnScreen(window_);
+    if (!known_ || on_screen != on_screen_) {
+      std::printf("[occlusion] t=%.2fs %s is %s (app %s)\n", since_start_s, name_,
+                  on_screen ? "on screen" : "NOT on screen", IsApplicationActive() ? "active" : "inactive");
+      std::fflush(stdout);
+      known_ = true;
+      on_screen_ = on_screen;
+    }
+    return on_screen_;
+  }
+
+ private:
+  const char* name_;
+  GLFWwindow* window_;
+  bool known_ = false;
+  bool on_screen_ = false;
+};
+
+// --occlusion-test: an undecorated window of our own covers the Output and
+// Controls windows in turn (and the Output window is minimized once), on a
+// fixed schedule, while the loop's behaviour is measured. The window server
+// computes occlusion the same way whichever app owns the covering window.
+class OcclusionTester {
+ public:
+  struct Phase {
+    double start_s;
+    const char* name;
+    enum Action : std::uint8_t { kNone, kCoverOutput, kCoverControls, kMinimizeOutput } action;
+  };
+
+  OcclusionTester(GLFWwindow* output, GLFWwindow* controls)
+      : output_(output), controls_(controls), occluder_(400, 300, "Relume occlusion test", false, false) {
+    MakeWindowOpaque(occluder_.get());  // an undrawn window is transparent and covers nothing
+    // Side by side and not overlapping, so only the occluder covers them.
+    glfwSetWindowSize(controls_, 600, 450);
+    glfwSetWindowPos(controls_, 40, 80);
+    glfwSetWindowPos(output_, 700, 80);
+  }
+
+  // Applies the phase for `t` and returns its index.
+  std::size_t Update(double t) {
+    std::size_t index = 0;
+    while (index + 1 < kPhases.size() && t >= kPhases[index + 1].start_s) {
+      ++index;
+    }
+    if (index != current_) {
+      current_ = index;
+      Apply(kPhases[index]);
+    }
+    return index;
+  }
+  bool done(double t) const { return t >= kPhases.back().start_s; }
+  GLFWwindow* occluder() const { return occluder_.get(); }
+  static const Phase& phase(std::size_t i) { return kPhases[i]; }
+  static std::size_t phase_count() { return kPhases.size(); }
+
+ private:
+  void Cover(GLFWwindow* target) {
+    int x = 0, y = 0, w = 0, h = 0, left = 0, top = 0, right = 0, bottom = 0;
+    glfwGetWindowPos(target, &x, &y);
+    glfwGetWindowSize(target, &w, &h);
+    glfwGetWindowFrameSize(target, &left, &top, &right, &bottom);
+    // Cover the whole frame, title bar included, with a margin.
+    glfwSetWindowPos(occluder_.get(), x - left - 20, y - top - 20);
+    glfwSetWindowSize(occluder_.get(), w + left + right + 40, h + top + bottom + 40);
+    glfwShowWindow(occluder_.get());
+    glfwFocusWindow(occluder_.get());
+  }
+  void Apply(const Phase& phase) {
+    std::printf("[occlusion-test] t=%.1fs phase: %s\n", phase.start_s, phase.name);
+    std::fflush(stdout);
+    glfwHideWindow(occluder_.get());
+    if (glfwGetWindowAttrib(output_, GLFW_ICONIFIED) == GLFW_TRUE) {
+      glfwRestoreWindow(output_);
+    }
+    switch (phase.action) {
+      case Phase::kNone: break;
+      case Phase::kCoverOutput: Cover(output_); break;
+      case Phase::kCoverControls: Cover(controls_); break;
+      case Phase::kMinimizeOutput: glfwIconifyWindow(output_); break;
+    }
+  }
+
+  static constexpr std::array<Phase, 12> kPhases = {{
+      {0.0, "startup (not measured)", Phase::kNone},
+      {3.0, "both windows visible", Phase::kNone},
+      {7.0, "Output covered", Phase::kCoverOutput},
+      {13.0, "uncovered", Phase::kNone},
+      {17.0, "Controls covered", Phase::kCoverControls},
+      {23.0, "uncovered", Phase::kNone},
+      {27.0, "Output covered again", Phase::kCoverOutput},
+      {33.0, "uncovered", Phase::kNone},
+      {37.0, "Output minimized", Phase::kMinimizeOutput},
+      {43.0, "restored", Phase::kNone},
+      {47.0, "both visible (final)", Phase::kNone},
+      {51.0, "end", Phase::kNone},
+  }};
+
+  GLFWwindow* output_;
+  GLFWwindow* controls_;
+  Window occluder_;
+  std::size_t current_ = static_cast<std::size_t>(-1);
+};
+
+// Per-phase measurements for the occlusion test.
+struct PhaseStats {
+  double seconds = 0.0;
+  std::uint64_t composed = 0;
+  std::uint64_t iterations = 0;
+  double max_iteration_ms = 0.0;
+};
+
 // Owns the video source and decides when it runs: permission, camera
 // selection, disconnect and reconnect. Main thread only.
 class CaptureController {
@@ -555,10 +710,41 @@ int RunWindowed(const AppOptions& options) {
   constexpr auto kMinIteration = std::chrono::milliseconds(8);
   const Clock::time_point run_start = Clock::now();
   Clock::time_point iteration_start = run_start;
+  IterationTrace trace;
+  OcclusionLog output_occlusion(CleanWindow::kTitle, output.window());
+  OcclusionLog controls_occlusion(ControlWindow::kTitle, controls.window());
+  std::optional<OcclusionTester> tester;
+  std::vector<PhaseStats> phase_stats(OcclusionTester::phase_count());
+  std::optional<OcclusionLog> occluder_occlusion;
+  if (options.occlusion_test) {
+    tester.emplace(output.window(), controls.window());
+    occluder_occlusion.emplace("occluder", tester->occluder());
+  }
   while (!controls.should_close()) {
     std::this_thread::sleep_until(iteration_start + kMinIteration);
+    const Clock::time_point previous_start = iteration_start;
     iteration_start = Clock::now();
+    const double t = Seconds(iteration_start - run_start);
+    trace.Begin();
+    std::size_t phase_index = 0;
+    if (tester) {
+      phase_index = tester->Update(t);
+      if (tester->done(t)) {
+        break;
+      }
+      PhaseStats& ps = phase_stats[phase_index];
+      ps.iterations += 1;
+      ps.max_iteration_ms =
+          std::max(ps.max_iteration_ms, std::chrono::duration<double, std::milli>(iteration_start - previous_start).count());
+    }
+    const std::uint64_t composed_before = pipeline.composed;
     glfwPollEvents();
+    trace.Mark("poll");
+    const bool output_on_screen = output_occlusion.Update(t);
+    const bool controls_on_screen = controls_occlusion.Update(t);
+    if (occluder_occlusion) {
+      occluder_occlusion->Update(t);
+    }
     output.HandleCloseRequest();
 
     if (capture.Update()) {
@@ -572,18 +758,22 @@ int RunWindowed(const AppOptions& options) {
     }
     status = next;
 
+    trace.Mark("capture");
     if (status.state == CaptureState::kLive || status.state == CaptureState::kStarting) {
       pipeline.Update(slot);
     } else {
       pipeline.ShowBlack();  // never a frozen or uninitialized frame
     }
+    trace.Mark("compose");
     output.Render(pipeline.presenter);
+    trace.Mark("output");
 
     ControlsModel model;
     model.status = status;
     model.output_visible = output.visible();
     capture.FillModel(model);
     const ControlsActions actions = controls.Render(model);
+    trace.Mark("controls");
     if (actions.toggle_output) {
       output.visible() ? output.Hide() : output.Show();
     }
@@ -592,6 +782,20 @@ int RunWindowed(const AppOptions& options) {
       pipeline.ShowBlack();
     }
     gpu->instance().ProcessEvents();
+    trace.Mark("events");
+    if (tester) {
+      phase_stats[phase_index].composed += pipeline.composed - composed_before;
+    }
+    if (options.trace && trace.TotalMs() > 50.0) {
+      char extra[200];
+      const WindowSurface* os = output.surface();
+      const WindowSurface* cs = controls.surface();
+      std::snprintf(extra, sizeof(extra),
+                    "Output on screen %d acquire %.1f present %.1f | Controls on screen %d acquire %.1f present %.1f",
+                    output_on_screen, os ? os->last_acquire_ms() : 0.0, os ? os->last_present_ms() : 0.0,
+                    controls_on_screen, cs ? cs->last_acquire_ms() : 0.0, cs ? cs->last_present_ms() : 0.0);
+      trace.Print(t, extra);
+    }
 
     const Clock::time_point now = Clock::now();
     stats.OnRender(now);
@@ -614,6 +818,30 @@ int RunWindowed(const AppOptions& options) {
     std::fprintf(stderr, "%u WebGPU errors during the run; last: %s\n", gpu->errors().count(),
                  gpu->errors().last().c_str());
     exit_code = 1;
+  }
+  if (tester) {
+    // Criteria fixed before the first run: after startup, no iteration over
+    // 100 ms, and at least 90% of the source's frame rate composed in every
+    // phase, covered or not.
+    constexpr double kMaxIterationMs = 100.0;
+    constexpr double kMinComposedFraction = 0.9;
+    const double source_fps = options.source == AppOptions::Source::kFile ? options.file.fps : 30.0;
+    int failures = 0;
+    std::printf("Occlusion test results:\n");
+    for (std::size_t i = 1; i + 1 < OcclusionTester::phase_count(); ++i) {
+      const auto& phase = OcclusionTester::phase(i);
+      const double seconds = OcclusionTester::phase(i + 1).start_s - phase.start_s;
+      const PhaseStats& ps = phase_stats[i];
+      const double fps = static_cast<double>(ps.composed) / seconds;
+      const bool ok = ps.max_iteration_ms <= kMaxIterationMs && fps >= kMinComposedFraction * source_fps;
+      std::printf("  %-24s composed %5.1f fps, loop %5.1f it/s, max iteration %6.1f ms  %s\n", phase.name, fps,
+                  static_cast<double>(ps.iterations) / seconds, ps.max_iteration_ms, ok ? "ok" : "FAIL");
+      failures += ok ? 0 : 1;
+    }
+    std::printf(failures == 0 ? "OCCLUSION TEST PASS\n" : "OCCLUSION TEST FAIL (%d phases)\n", failures);
+    if (failures != 0) {
+      exit_code = 1;
+    }
   }
   std::printf("Relume exited cleanly (exit code %d)\n", exit_code);
   return exit_code;
@@ -671,6 +899,10 @@ std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error
         return std::nullopt;
       }
       options.camera_id = v;
+    } else if (arg == "--trace") {
+      options.trace = true;
+    } else if (arg == "--occlusion-test") {
+      options.occlusion_test = true;
     } else if (arg == "--headless") {
       options.headless = true;
     } else if (arg == "--frames") {

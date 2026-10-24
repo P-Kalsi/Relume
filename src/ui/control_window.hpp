@@ -42,6 +42,8 @@ class ControlWindow {
   ControlWindow(const ControlWindow&) = delete;
   ControlWindow& operator=(const ControlWindow&) = delete;
 
+  GLFWwindow* window() const { return window_.get(); }
+  const WindowSurface* surface() const { return surface_ ? &*surface_ : nullptr; }
   bool ok() const { return error_.empty(); }
   const std::string& error() const { return error_; }
   bool should_close() const;

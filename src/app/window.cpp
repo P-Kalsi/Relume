@@ -24,10 +24,11 @@ GlfwLibrary::~GlfwLibrary() {
   }
 }
 
-Window::Window(int width, int height, const char* title, bool visible) {
+Window::Window(int width, int height, const char* title, bool visible, bool decorated) {
   glfwDefaultWindowHints();
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);  // WebGPU, not OpenGL
   glfwWindowHint(GLFW_VISIBLE, visible ? GLFW_TRUE : GLFW_FALSE);
+  glfwWindowHint(GLFW_DECORATED, decorated ? GLFW_TRUE : GLFW_FALSE);
   window_ = glfwCreateWindow(width, height, title, nullptr, nullptr);
 }
 
@@ -99,6 +100,7 @@ std::optional<WindowSurface::Frame> WindowSurface::Acquire() {
     surface_.GetCurrentTexture(&surface_texture);
     const double waited_ms =
         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - wait_start).count();
+    last_acquire_ms_ = waited_ms;
     if (waited_ms > 100.0) {
       // Diagnostic: the window system had no drawable ready (CAMetalLayer
       // blocks for up to 1 s), which stalls the whole render loop.
@@ -123,6 +125,10 @@ std::optional<WindowSurface::Frame> WindowSurface::Acquire() {
   return std::nullopt;
 }
 
-void WindowSurface::Present() { surface_.Present(); }
+void WindowSurface::Present() {
+  const auto start = std::chrono::steady_clock::now();
+  surface_.Present();
+  last_present_ms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+}
 
 }  // namespace relume

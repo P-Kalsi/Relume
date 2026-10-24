@@ -30,7 +30,7 @@ class GlfwLibrary {
 // A GLFW window without a GL context (WebGPU renders into it).
 class Window {
  public:
-  Window(int width, int height, const char* title, bool visible);
+  Window(int width, int height, const char* title, bool visible, bool decorated = true);
   ~Window();
   Window(const Window&) = delete;
   Window& operator=(const Window&) = delete;
@@ -63,6 +63,9 @@ class WindowSurface {
 
   std::uint32_t width() const { return width_; }
   std::uint32_t height() const { return height_; }
+  // Time the last Acquire() spent in GetCurrentTexture and the last Present().
+  double last_acquire_ms() const { return last_acquire_ms_; }
+  double last_present_ms() const { return last_present_ms_; }
 
  private:
   void Configure(std::uint32_t width, std::uint32_t height);
@@ -75,6 +78,8 @@ class WindowSurface {
   std::uint32_t width_ = 0;
   std::uint32_t height_ = 0;
   bool needs_configure_ = true;
+  double last_acquire_ms_ = 0.0;
+  double last_present_ms_ = 0.0;
   std::string error_;
 };
 
