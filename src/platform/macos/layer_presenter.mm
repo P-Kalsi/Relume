@@ -4,22 +4,37 @@
 // is covered, and Dawn holds its device lock while it waits, so every window
 // and the clean-output compositing stall. Nothing here waits.
 //
-// Each window owns three buffers, each an IOSurface imported into Dawn as
-// SharedTextureMemory:
+// Each window owns four buffers, each an IOSurface imported into Dawn as
+// SharedTextureMemory. Four, not three: the window server can hold two
+// surfaces at once (on screen and being composited) while one waits on the
+// GPU; with three, measured runs skipped up to ~30% of frames depending on the
+// loop's phase relative to vsync, with four none were skipped.
 //
-//   free --Acquire (only if !IOSurfaceIsInUse)--> rendering
+//   free --Acquire (if reusable, see below)--> rendering
 //        --Present: EndAccess, OnSubmittedWorkDone--> gpu-pending
 //        --GPU done callback (in ProcessEvents)--> ready
 //        --FinishFrames: layer.contents = surface--> displayed --replaced--> free
 //
 // - The GPU has finished a frame before Core Animation is given it.
-// - A surface the window server may still be reading (IOSurfaceIsInUse) is
-//   never rendered into; if no buffer is free the window skips that frame.
+// - The displayed surface is never rendered into.
+// - A surface that was ever given to Core Animation is rendered into again
+//   only if IOSurfaceIsInUse is false AND a newer committed surface has since
+//   been seen in use (IOSurfaceIsInUse true). "Not in use" alone is not
+//   trusted: right after a window starts being covered, or before it is first
+//   shown, committed surfaces were observed never to be marked in use, so the
+//   render server's progress past them could not be confirmed. Seeing a newer
+//   surface in use shows the render server has applied a later transaction.
+//   Remaining assumption: Core Animation applies committed transactions in
+//   order and never goes back to superseded contents. That is how layer
+//   contents are documented to behave, but it is not proven here.
+// - If no buffer is reusable, the window skips that frame; nothing waits.
 // - GPU-completion callbacks hold weak references, so dropping a buffer is
 //   always safe; Dawn's SharedTextureMemory retains the IOSurface for as long
 //   as GPU work uses it, and CALayer retains the surface it displays.
 
 #include "platform/layer_presenter.hpp"
+
+#include "relume/compositor_reuse.hpp"
 
 #import <Cocoa/Cocoa.h>
 #import <IOSurface/IOSurface.h>
@@ -32,6 +47,7 @@
 #include <array>
 #include <chrono>
 #include <cstdint>
+#include <string>
 
 namespace relume {
 namespace {
@@ -62,6 +78,7 @@ struct Buffer {
   wgpu::TextureView view;
   State state = State::kFree;
   std::uint64_t generation = 0;
+  bool committed = false;  // ever given to Core Animation as layer contents
 };
 
 class LayerPresenter final : public WindowPresenter {
@@ -94,6 +111,9 @@ class LayerPresenter final : public WindowPresenter {
   }
 
   const char* kind() const override { return "layer"; }
+  std::string diagnostics() const override {
+    return "buffers held back until the render server was seen past them: " + std::to_string(held_back_);
+  }
 
   std::optional<Frame> Acquire() override {
     const Clock::time_point start = Clock::now();
@@ -131,6 +151,7 @@ class LayerPresenter final : public WindowPresenter {
   }
 
   void FinishFrames() override {
+    ObserveRenderServer();
     std::shared_ptr<Buffer> newest;
     for (const auto& buffer : buffers_) {
       if (buffer && buffer->state == Buffer::State::kReady &&
@@ -151,6 +172,8 @@ class LayerPresenter final : public WindowPresenter {
     layer_.contentsScale = static_cast<NSWindow*>(glfwGetCocoaWindow(window_)).backingScaleFactor;
     layer_.contents = (__bridge id)newest->surface;
     [CATransaction commit];
+    newest->committed = true;
+    ++presented_frames_;
     if (displayed_ && displayed_ != newest && displayed_->state == Buffer::State::kDisplayed) {
       displayed_->state = Buffer::State::kFree;
     }
@@ -186,8 +209,9 @@ class LayerPresenter final : public WindowPresenter {
         }
       }
     }
+    ObserveRenderServer();
     for (const auto& buffer : buffers_) {
-      if (buffer->state != Buffer::State::kFree || IOSurfaceIsInUse(buffer->surface)) {
+      if (!Reusable(*buffer)) {
         continue;
       }
       wgpu::SharedTextureMemoryBeginAccessDescriptor begin{};
@@ -199,10 +223,35 @@ class LayerPresenter final : public WindowPresenter {
       current_ = buffer;
       return Frame{buffer->texture, buffer->view, width, height};
     }
-    return std::nullopt;  // all buffers busy: skip this frame, never wait
+    ++skipped_frames_;
+    return std::nullopt;  // no buffer confirmed reusable: skip this frame, never wait
+  }
+
+  // Records the newest committed generation the render server is holding.
+  void ObserveRenderServer() {
+    for (const auto& buffer : buffers_) {
+      if (buffer && buffer->committed && buffer->generation > reuse_.seen_generation() &&
+          IOSurfaceIsInUse(buffer->surface)) {
+        reuse_.ObserveInUse(buffer->generation);
+      }
+    }
+  }
+
+  // See CompositorReuseTracker: a committed surface is reused only after the
+  // render server has been seen holding a newer one.
+  bool Reusable(const Buffer& buffer) {
+    const bool free = buffer.state == Buffer::State::kFree;
+    const bool in_use = IOSurfaceIsInUse(buffer.surface);
+    const bool reusable = reuse_.CanReuse(free, in_use, buffer.committed, buffer.generation);
+    if (free && !in_use && !reusable) {
+      ++held_back_;
+    }
+    return reusable;
   }
 
   void DropAll() {
+    // New buffers start uncommitted; generations keep increasing, so the
+    // seen-generation evidence stays valid across the swap.
     displayed_.reset();
     for (auto& buffer : buffers_) {
       buffer.reset();
@@ -240,10 +289,12 @@ class LayerPresenter final : public WindowPresenter {
   const GpuContext& gpu_;
   GLFWwindow* window_;
   CALayer* layer_ = nil;
-  std::array<std::shared_ptr<Buffer>, 3> buffers_{};
+  std::array<std::shared_ptr<Buffer>, 4> buffers_{};
   std::shared_ptr<Buffer> current_;    // being rendered this iteration
   std::shared_ptr<Buffer> displayed_;  // the layer's contents
   std::uint64_t generation_ = 0;
+  CompositorReuseTracker reuse_;
+  std::uint64_t held_back_ = 0;        // free, not in use, but not yet confirmed safe
 };
 
 }  // namespace

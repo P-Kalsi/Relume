@@ -129,6 +129,7 @@ std::optional<WindowPresenter::Frame> SurfacePresenter::Acquire() {
 void SurfacePresenter::Present() {
   const auto start = std::chrono::steady_clock::now();
   surface_.Present();
+  ++presented_frames_;
   last_present_ms_ = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
 }
 

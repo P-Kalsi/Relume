@@ -57,6 +57,7 @@ class WindowPresenter {
 
   virtual ~WindowPresenter() = default;
   virtual const char* kind() const = 0;
+  virtual std::string diagnostics() const { return {}; }
   bool ok() const { return error_.empty(); }
   const std::string& error() const { return error_; }
   wgpu::TextureFormat format() const { return format_; }
@@ -72,6 +73,10 @@ class WindowPresenter {
   // Time the last Acquire() and Present() took.
   double last_acquire_ms() const { return last_acquire_ms_; }
   double last_present_ms() const { return last_present_ms_; }
+  // Frames handed to the window system, and frames skipped because no buffer
+  // could take one (only the layer presenter skips; the surface waits).
+  std::uint64_t presented_frames() const { return presented_frames_; }
+  std::uint64_t skipped_frames() const { return skipped_frames_; }
 
  protected:
   wgpu::TextureFormat format_ = wgpu::TextureFormat::Undefined;
@@ -79,6 +84,8 @@ class WindowPresenter {
   std::uint32_t height_ = 0;
   double last_acquire_ms_ = 0.0;
   double last_present_ms_ = 0.0;
+  std::uint64_t presented_frames_ = 0;
+  std::uint64_t skipped_frames_ = 0;
   std::string error_;
 };
 

@@ -133,7 +133,8 @@ class StatsLogger {
   }
 
   void Maybe(Clock::time_point now, const ICameraSource* source, const LatestFrameSlot& slot,
-             const VideoPipeline& pipeline) {
+             const VideoPipeline& pipeline, const WindowPresenter* output = nullptr,
+             const WindowPresenter* controls = nullptr) {
     const double elapsed = Seconds(now - last_);
     if (interval_s_ <= 0.0 || elapsed < interval_s_) {
       return;
@@ -158,6 +159,19 @@ class StatsLogger {
         static_cast<unsigned long long>(capture.dropped_driver),
         static_cast<unsigned long long>(capture.dropped_invalid),
         static_cast<unsigned long long>(pipeline.rejected), ProcessFootprintMiB());
+    if (output != nullptr && controls != nullptr) {
+      auto rate = [&](std::uint64_t now_count, std::uint64_t& last) {
+        const double r = static_cast<double>(now_count - last) / elapsed;
+        last = now_count;
+        return r;
+      };
+      const double op = rate(output->presented_frames(), last_out_presented_);
+      const double os = rate(output->skipped_frames(), last_out_skipped_);
+      const double cp = rate(controls->presented_frames(), last_ctl_presented_);
+      const double cs = rate(controls->skipped_frames(), last_ctl_skipped_);
+      std::printf("[stats] windows: Output presented %.1f/s skipped %.1f/s | Controls presented %.1f/s skipped %.1f/s\n",
+                  op, os, cp, cs);
+    }
     std::fflush(stdout);
     last_ = now;
     last_received_ = capture.frames_received;
@@ -174,6 +188,7 @@ class StatsLogger {
   LatencyHistogram render_interval_ms_;
   double max_interval_ms_ = 0.0;  // catches single stalls that percentiles hide
   const ICameraSource* last_source_ = nullptr;
+  std::uint64_t last_out_presented_ = 0, last_out_skipped_ = 0, last_ctl_presented_ = 0, last_ctl_skipped_ = 0;
   std::uint64_t renders_ = 0;
   std::uint64_t last_renders_ = 0;
   std::uint64_t last_received_ = 0;
@@ -544,6 +559,7 @@ struct PhaseStats {
   std::uint64_t iterations = 0;
   double max_iteration_ms = 0.0;
   double max_present_ms = 0.0;  // compose + both windows + finishing frames
+  std::uint64_t output_presented = 0, output_skipped = 0, controls_presented = 0, controls_skipped = 0;
 };
 
 // Owns the video source and decides when it runs: permission, camera
@@ -797,6 +813,8 @@ int RunWindowed(const AppOptions& options) {
           std::max(ps.max_iteration_ms, std::chrono::duration<double, std::milli>(iteration_start - previous_start).count());
     }
     const std::uint64_t composed_before = pipeline.composed;
+    const std::uint64_t out_p0 = output.presenter()->presented_frames(), out_s0 = output.presenter()->skipped_frames();
+    const std::uint64_t ctl_p0 = controls.presenter()->presented_frames(), ctl_s0 = controls.presenter()->skipped_frames();
     glfwPollEvents();
     trace.Mark("poll");
     const bool output_on_screen = output_occlusion.Update(t);
@@ -848,6 +866,10 @@ int RunWindowed(const AppOptions& options) {
       PhaseStats& ps = phase_stats[phase_index];
       ps.composed += pipeline.composed - composed_before;
       ps.max_present_ms = std::max(ps.max_present_ms, trace.Between("capture", "events"));
+      ps.output_presented += output.presenter()->presented_frames() - out_p0;
+      ps.output_skipped += output.presenter()->skipped_frames() - out_s0;
+      ps.controls_presented += controls.presenter()->presented_frames() - ctl_p0;
+      ps.controls_skipped += controls.presenter()->skipped_frames() - ctl_s0;
     }
     if (options.trace && trace.TotalMs() > 50.0) {
       char extra[200];
@@ -862,7 +884,7 @@ int RunWindowed(const AppOptions& options) {
 
     const Clock::time_point now = Clock::now();
     stats.OnRender(now);
-    stats.Maybe(now, capture.source(), slot, pipeline);
+    stats.Maybe(now, capture.source(), slot, pipeline, output.presenter(), controls.presenter());
     if (gpu->errors().device_lost()) {
       std::fprintf(stderr, "FAIL: the GPU device was lost\n");
       exit_code = 1;
@@ -886,11 +908,14 @@ int RunWindowed(const AppOptions& options) {
     // Criteria (fixed before the first run): in every phase, compositing and
     // presenting both windows never takes over 50 ms in one iteration; outside
     // the minimize/restore phases, no iteration exceeds 100 ms and at least
-    // 90% of the source frame rate is composed. Minimizing runs AppKit's
+    // 90% of the source frame rate is composed; a fully visible window skips
+    // at most 5% and presents at least 50% of iterations. Minimizing runs AppKit's
     // animation inside glfwPollEvents; that stall is reported, not judged.
     constexpr double kMaxPresentMs = 50.0;
     constexpr double kMaxIterationMs = 100.0;
     constexpr double kMinComposedFraction = 0.9;
+    constexpr double kMinPresentFraction = 0.5;
+    constexpr double kMaxSkipFraction = 0.05;
     const double source_fps = options.source == AppOptions::Source::kFile ? options.file.fps : 30.0;
     int failures = 0;
     std::printf("Occlusion test results (presenter '%s'):\n", output.presenter()->kind());
@@ -901,13 +926,35 @@ int RunWindowed(const AppOptions& options) {
       const double fps = static_cast<double>(ps.composed) / seconds;
       const bool appkit = phase.action == OcclusionTester::Phase::kMinimizeOutput ||
                           (i > 0 && OcclusionTester::phase(i - 1).action == OcclusionTester::Phase::kMinimizeOutput);
-      const bool ok = ps.max_present_ms <= kMaxPresentMs &&
+      // A fully visible window (not covered, minimized or being resized)
+      // must skip at most 5% of iterations and present at least half of them
+      // (30 frames/s at 60 Hz, every frame of a 30 fps source). Frames that
+      // finish in the same tick as a newer one are superseded, not skipped.
+      const bool all_visible = phase.action == OcclusionTester::Phase::kNone && !appkit;
+      const double iterations = static_cast<double>(std::max<std::uint64_t>(ps.iterations, 1));
+      auto window_ok = [&](std::uint64_t presented, std::uint64_t skipped) {
+        return static_cast<double>(skipped) <= kMaxSkipFraction * iterations &&
+               static_cast<double>(presented) >= kMinPresentFraction * iterations;
+      };
+      const bool presenting_ok = !all_visible || (window_ok(ps.output_presented, ps.output_skipped) &&
+                                                  window_ok(ps.controls_presented, ps.controls_skipped));
+      const bool ok = ps.max_present_ms <= kMaxPresentMs && presenting_ok &&
                       (appkit || (ps.max_iteration_ms <= kMaxIterationMs && fps >= kMinComposedFraction * source_fps));
-      std::printf("  %-24s composed %5.1f fps, loop %5.1f it/s, max iteration %6.1f ms, max present %5.1f ms%s  %s\n",
+      std::printf("  %-24s composed %5.1f fps, loop %5.1f it/s, max iteration %6.1f ms, max present %5.1f ms | "
+                  "Output presented %4llu skipped %4llu, Controls presented %4llu skipped %4llu%s  %s\n",
                   phase.name, fps, static_cast<double>(ps.iterations) / seconds, ps.max_iteration_ms,
-                  ps.max_present_ms, appkit ? " (AppKit minimize animation: iteration not judged)" : "",
-                  ok ? "ok" : "FAIL");
+                  ps.max_present_ms, static_cast<unsigned long long>(ps.output_presented),
+                  static_cast<unsigned long long>(ps.output_skipped),
+                  static_cast<unsigned long long>(ps.controls_presented),
+                  static_cast<unsigned long long>(ps.controls_skipped),
+                  appkit ? " (AppKit minimize animation: iteration not judged)" : "", ok ? "ok" : "FAIL");
       failures += ok ? 0 : 1;
+    }
+    for (const WindowPresenter* p : {output.presenter(), controls.presenter()}) {
+      if (!p->diagnostics().empty()) {
+        std::printf("  %s presenter: %s\n", p == output.presenter() ? CleanWindow::kTitle : ControlWindow::kTitle,
+                    p->diagnostics().c_str());
+      }
     }
     std::printf(failures == 0 ? "OCCLUSION TEST PASS\n" : "OCCLUSION TEST FAIL (%d phases)\n", failures);
     if (failures != 0) {
