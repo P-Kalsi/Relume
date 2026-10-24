@@ -4,6 +4,7 @@
 
 #include <GLFW/glfw3.h>
 
+#include <chrono>
 #include <cstdio>
 
 namespace relume {
@@ -94,7 +95,16 @@ std::optional<WindowSurface::Frame> WindowSurface::Acquire() {
   }
   for (int attempt = 0; attempt < 2; ++attempt) {
     wgpu::SurfaceTexture surface_texture{};
+    const auto wait_start = std::chrono::steady_clock::now();
     surface_.GetCurrentTexture(&surface_texture);
+    const double waited_ms =
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - wait_start).count();
+    if (waited_ms > 100.0) {
+      // Diagnostic: the window system had no drawable ready (CAMetalLayer
+      // blocks for up to 1 s), which stalls the whole render loop.
+      std::printf("[surface] %s waited %.0f ms for a drawable (status %u)\n", glfwGetWindowTitle(window_),
+                  waited_ms, static_cast<unsigned>(surface_texture.status));
+    }
     switch (surface_texture.status) {
       case wgpu::SurfaceGetCurrentTextureStatus::SuccessOptimal:
       case wgpu::SurfaceGetCurrentTextureStatus::SuccessSuboptimal:

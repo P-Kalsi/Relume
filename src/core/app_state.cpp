@@ -18,7 +18,7 @@ CaptureStatus DeriveStatus(const CaptureFacts& facts) {
     return {CaptureState::kError, facts.error.empty() ? "The camera stopped with an error." : facts.error};
   }
   if (facts.has_selection && !facts.selected_present) {
-    return {CaptureState::kCameraUnavailable, "The selected camera is disconnected. Waiting for it to return."};
+    return {CaptureState::kCameraUnavailable, "The selected camera is not connected. Waiting for it to appear."};
   }
   if (!facts.any_device) {
     return {CaptureState::kNoCamera, "No camera found."};

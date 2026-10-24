@@ -16,6 +16,16 @@ relume_set_warnings(relume_core)
 add_library(relume_camera STATIC
   camera/file_source.cpp)
 target_link_libraries(relume_camera PUBLIC relume_core)
+if(APPLE)
+  # AVFoundation adapter (Objective-C++, ARC). Only this file is
+  # platform-specific; everything above it uses the portable interfaces.
+  target_sources(relume_camera PRIVATE camera/avfoundation.mm)
+  target_compile_options(relume_camera PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+  target_link_libraries(relume_camera PUBLIC
+    "-framework Foundation" "-framework AVFoundation" "-framework CoreMedia" "-framework CoreVideo")
+else()
+  target_sources(relume_camera PRIVATE camera/camera_stub.cpp)
+endif()
 relume_set_warnings(relume_camera)
 
 # relume_render: Dawn/WebGPU upload, compositing and presentation. WGSL

@@ -3,6 +3,7 @@
 #include "app/window.hpp"
 #include "output/clean_window.hpp"
 #include "relume/app_state.hpp"
+#include "relume/camera.hpp"
 #include "relume/event_queue.hpp"
 #include "relume/frame_queue.hpp"
 #include "relume/image_io.hpp"
@@ -37,6 +38,7 @@ constexpr char kUsage[] =
     "  --camera <unique-id>      open this camera instead of choosing automatically\n"
     "  --headless                no windows: render offscreen and check the output (file source only)\n"
     "  --frames <N>              stop after N composed frames\n"
+    "  --seconds <S>             stop after S seconds (windowed)\n"
     "  --stats <seconds>         stats log interval, 0 to disable (default 5)\n";
 
 using Clock = std::chrono::steady_clock;
@@ -116,7 +118,9 @@ class StatsLogger {
 
   void OnRender(Clock::time_point now) {
     if (last_render_ != Clock::time_point{}) {
-      render_interval_ms_.Record(std::chrono::duration<double, std::milli>(now - last_render_).count());
+      const double ms = std::chrono::duration<double, std::milli>(now - last_render_).count();
+      render_interval_ms_.Record(ms);
+      max_interval_ms_ = std::max(max_interval_ms_, ms);
     }
     last_render_ = now;
     ++renders_;
@@ -129,15 +133,21 @@ class StatsLogger {
       return;
     }
     const CaptureStats capture = source != nullptr ? source->stats() : CaptureStats{};
+    if (source != last_source_ || capture.frames_received < last_received_) {
+      last_received_ = 0;  // a new source counts from zero
+      last_source_ = source;
+    }
     const SlotStats slot_stats = slot.stats();
     std::printf(
-        "[stats] capture %.1f fps (copy p50 %.2f p95 %.2f ms) | composed %.1f fps | render loop %.1f fps "
-        "(interval p50 %.2f p95 %.2f ms) | dropped: pool %llu, unread %llu, driver %llu, invalid %llu, "
+        "[stats] capture %.1f fps (timestamp interval p50 %.2f p95 %.2f ms; copy p50 %.2f p95 %.2f ms) | "
+        "composed %.1f fps | render loop %.1f fps "
+        "(interval p50 %.2f p95 %.2f max %.1f ms) | dropped: pool %llu, unread %llu, driver %llu, invalid %llu, "
         "rejected %llu\n",
-        static_cast<double>(capture.frames_received - last_received_) / elapsed, capture.copy_ms_p50,
+        static_cast<double>(capture.frames_received - last_received_) / elapsed, capture.interval_ms_p50,
+        capture.interval_ms_p95, capture.copy_ms_p50,
         capture.copy_ms_p95, static_cast<double>(pipeline.composed - last_composed_) / elapsed,
         static_cast<double>(renders_ - last_renders_) / elapsed, render_interval_ms_.Percentile(0.5),
-        render_interval_ms_.Percentile(0.95), static_cast<unsigned long long>(capture.dropped_pool),
+        render_interval_ms_.Percentile(0.95), max_interval_ms_, static_cast<unsigned long long>(capture.dropped_pool),
         static_cast<unsigned long long>(slot_stats.dropped_unread),
         static_cast<unsigned long long>(capture.dropped_driver),
         static_cast<unsigned long long>(capture.dropped_invalid),
@@ -148,6 +158,7 @@ class StatsLogger {
     last_composed_ = pipeline.composed;
     last_renders_ = renders_;
     render_interval_ms_.Reset();
+    max_interval_ms_ = 0.0;
   }
 
  private:
@@ -155,6 +166,8 @@ class StatsLogger {
   Clock::time_point last_;
   Clock::time_point last_render_{};
   LatencyHistogram render_interval_ms_;
+  double max_interval_ms_ = 0.0;  // catches single stalls that percentiles hide
+  const ICameraSource* last_source_ = nullptr;
   std::uint64_t renders_ = 0;
   std::uint64_t last_renders_ = 0;
   std::uint64_t last_received_ = 0;
@@ -322,11 +335,191 @@ int RunHeadless(const AppOptions& options) {
 
 // --- Windowed app ---
 
-int RunWindowed(const AppOptions& options) {
-  if (options.source == AppOptions::Source::kCamera) {
-    std::fprintf(stderr, "The camera source is not available in this build yet; use --source file\n");
-    return 1;
+const char* PermissionName(PermissionState permission) {
+  switch (permission) {
+    case PermissionState::kNotDetermined: return "not determined";
+    case PermissionState::kAuthorized: return "authorized";
+    case PermissionState::kDenied: return "denied";
+    case PermissionState::kRestricted: return "restricted";
   }
+  return "unknown";
+}
+
+// Owns the video source and decides when it runs: permission, camera
+// selection, disconnect and reconnect. Main thread only.
+class CaptureController {
+ public:
+  CaptureController(const AppOptions& options, CameraEventQueue& events, LatestFrameSlot& slot)
+      : options_(options), events_(events), slot_(slot) {
+    if (options.source == AppOptions::Source::kFile) {
+      CameraDeviceInfo file;
+      file.id = FileSource::kDeviceId;
+      file.name = options.file.path.empty() ? "Orientation test pattern" : options.file.path;
+      devices_.push_back(file);
+      selected_id_ = file.id;
+      return;
+    }
+    system_ = CreatePlatformCameraSystem(events);
+    permission_ = system_->permission();
+    std::printf("Camera permission at launch: %s\n", PermissionName(permission_));
+    if (permission_ == PermissionState::kNotDetermined) {
+      std::printf("Requesting camera access (answer the macOS prompt)\n");
+      system_->RequestPermission();
+    }
+    RefreshDevices();
+    selected_id_ = options.camera_id;
+    if (!selected_id_.empty()) {
+      std::printf("Requested camera: %s\n", selected_id_.c_str());
+    }
+  }
+
+  ~CaptureController() { StopSource(); }
+  CaptureController(const CaptureController&) = delete;
+  CaptureController& operator=(const CaptureController&) = delete;
+
+  // Handles events and starts or stops the source. Returns true when the
+  // source was replaced or stopped, so the caller resets its frame state.
+  bool Update() {
+    bool changed = false;
+    while (std::optional<CameraEvent> event = events_.Poll()) {
+      switch (event->kind) {
+        case CameraEvent::Kind::kPermissionChanged:
+          permission_ = system_ ? system_->permission() : permission_;
+          std::printf("[camera] %s (now %s)\n", event->message.c_str(), PermissionName(permission_));
+          RefreshDevices();
+          break;
+        case CameraEvent::Kind::kDevicesChanged:
+          std::printf("[camera] %s\n", event->message.c_str());
+          RefreshDevices();
+          break;
+        case CameraEvent::Kind::kSourceFailed:
+          error_ = event->message;
+          std::printf("[camera] error: %s\n", event->message.c_str());
+          break;
+        case CameraEvent::Kind::kSourceStarted:
+          std::printf("[camera] started: %s\n", event->message.c_str());
+          break;
+        case CameraEvent::Kind::kSourceEnded:
+          std::printf("[camera] %s\n", event->message.c_str());
+          break;
+        case CameraEvent::Kind::kWarning:
+          warning_ = event->message;
+          std::printf("[camera] warning: %s\n", event->message.c_str());
+          break;
+      }
+    }
+    if (system_ && selected_id_.empty() && permission_ == PermissionState::kAuthorized) {
+      if (std::optional<std::size_t> index = ChooseDefaultDevice(devices_, "")) {
+        selected_id_ = devices_[*index].id;
+        std::printf("Selected camera: %s [%s]\n", devices_[*index].name.c_str(), selected_id_.c_str());
+      }
+    }
+    // Disconnect: stop now and show black instead of a frozen frame.
+    if (source_ && !SelectedPresent()) {
+      std::printf("[camera] selected camera is gone; stopping capture\n");
+      StopSource();
+      changed = true;
+    }
+    if (ShouldStartCapture(Facts())) {
+      changed = StartSource() || changed;
+    }
+    return changed;
+  }
+
+  // The user picked another camera (virtual cameras were confirmed in the UI).
+  bool Select(const std::string& id) {
+    if (id == selected_id_ || !system_) {
+      return false;
+    }
+    StopSource();
+    selected_id_ = id;
+    std::printf("Selected camera: %s\n", id.c_str());
+    return true;
+  }
+
+  CaptureFacts Facts() const {
+    CaptureFacts facts;
+    facts.permission = permission_;
+    facts.any_device = !devices_.empty();
+    facts.has_selection = !selected_id_.empty();
+    facts.selected_present = SelectedPresent();
+    facts.source = source_ ? source_->state() : SourceState::kIdle;
+    facts.frame_received = facts.source == SourceState::kRunning;
+    facts.error = error_;
+    return facts;
+  }
+
+  void FillModel(ControlsModel& model) const {
+    model.devices = devices_;
+    model.selected_id = selected_id_;
+    model.source_description = source_ ? source_->description() : std::string();
+    model.warning = warning_;
+    model.camera_selectable = system_ != nullptr;
+  }
+
+  const ICameraSource* source() const { return source_.get(); }
+
+  void StopSource() {
+    if (source_) {
+      source_->Stop();
+      source_.reset();
+    }
+    slot_.Clear();
+  }
+
+ private:
+  void RefreshDevices() {
+    if (!system_) {
+      return;
+    }
+    devices_ = system_->EnumerateDevices();
+    std::printf("Cameras (%zu):\n", devices_.size());
+    for (const CameraDeviceInfo& device : devices_) {
+      std::printf("  - %s [%s]%s, %zu formats\n", device.name.c_str(), device.id.c_str(),
+                  device.is_virtual ? " (virtual: never selected automatically)" : "", device.formats.size());
+    }
+  }
+
+  bool SelectedPresent() const {
+    for (const CameraDeviceInfo& device : devices_) {
+      if (device.id == selected_id_) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool StartSource() {
+    error_.clear();
+    warning_.clear();
+    if (system_) {
+      CaptureRequest request;
+      request.pixel_format = options_.pixel_format;
+      source_ = system_->CreateSource(selected_id_, request, slot_);
+    } else {
+      source_ = std::make_unique<FileSource>(options_.file, slot_, events_);
+    }
+    if (!source_) {
+      error_ = "This platform has no camera support yet.";
+      return false;
+    }
+    source_->Start();
+    return true;
+  }
+
+  const AppOptions& options_;
+  CameraEventQueue& events_;
+  LatestFrameSlot& slot_;
+  std::unique_ptr<ICameraSystem> system_;  // null for the file source
+  PermissionState permission_ = PermissionState::kAuthorized;
+  std::vector<CameraDeviceInfo> devices_;
+  std::string selected_id_;
+  std::string error_;
+  std::string warning_;
+  std::unique_ptr<ICameraSource> source_;  // declared last: stopped before the rest goes
+};
+
+int RunWindowed(const AppOptions& options) {
   GlfwLibrary glfw;
   if (!glfw.ok()) {
     std::fprintf(stderr, "FAIL: could not initialize GLFW\n");
@@ -350,57 +543,59 @@ int RunWindowed(const AppOptions& options) {
 
   CameraEventQueue events;
   LatestFrameSlot slot;
-  std::unique_ptr<ICameraSource> source = std::make_unique<FileSource>(options.file, slot, events);
-  source->Start();
-  std::printf("%s\n", source->description().c_str());
+  CaptureController capture(options, events, slot);
 
   StatsLogger stats(options.stats_interval_s);
   CaptureStatus status;
+  status.state = CaptureState::kStarting;
   int exit_code = 0;
   // Vsync normally paces the loop (60 Hz here). macOS stops pacing occluded
   // windows, so this floor caps the loop at about 125 Hz instead of letting
   // it spin; it is below one 60 Hz frame so it never costs a vsync.
   constexpr auto kMinIteration = std::chrono::milliseconds(8);
-  Clock::time_point iteration_start = Clock::now();
+  const Clock::time_point run_start = Clock::now();
+  Clock::time_point iteration_start = run_start;
   while (!controls.should_close()) {
     std::this_thread::sleep_until(iteration_start + kMinIteration);
     iteration_start = Clock::now();
     glfwPollEvents();
     output.HandleCloseRequest();
-    while (auto event = events.Poll()) {
-      std::printf("[event] %s\n", event->message.c_str());
-    }
 
-    CaptureFacts facts;
-    facts.permission = PermissionState::kAuthorized;  // a file needs no permission
-    facts.any_device = facts.has_selection = facts.selected_present = true;
-    facts.source = source->state();
-    facts.frame_received = pipeline.showing_video;
-    const CaptureStatus next = DeriveStatus(facts);
-    if (next.state != status.state) {
+    if (capture.Update()) {
+      pipeline.ResetFrameIds();
+      pipeline.ShowBlack();
+    }
+    const CaptureStatus next = DeriveStatus(capture.Facts());
+    if (next.state != status.state || next.detail != status.detail) {
       std::printf("[status] %s: %s\n", StatusLabel(next.state).data(), next.detail.c_str());
+      std::fflush(stdout);
     }
     status = next;
 
-    pipeline.Update(slot);
-    if (status.state != CaptureState::kLive && status.state != CaptureState::kStarting) {
-      pipeline.ShowBlack();
+    if (status.state == CaptureState::kLive || status.state == CaptureState::kStarting) {
+      pipeline.Update(slot);
+    } else {
+      pipeline.ShowBlack();  // never a frozen or uninitialized frame
     }
     output.Render(pipeline.presenter);
+
     ControlsModel model;
     model.status = status;
-    model.source_description = source->description();
-    model.camera_selectable = false;
     model.output_visible = output.visible();
+    capture.FillModel(model);
     const ControlsActions actions = controls.Render(model);
     if (actions.toggle_output) {
       output.visible() ? output.Hide() : output.Show();
+    }
+    if (actions.select_device && capture.Select(*actions.select_device)) {
+      pipeline.ResetFrameIds();
+      pipeline.ShowBlack();
     }
     gpu->instance().ProcessEvents();
 
     const Clock::time_point now = Clock::now();
     stats.OnRender(now);
-    stats.Maybe(now, source.get(), slot, pipeline);
+    stats.Maybe(now, capture.source(), slot, pipeline);
     if (gpu->errors().device_lost()) {
       std::fprintf(stderr, "FAIL: the GPU device was lost\n");
       exit_code = 1;
@@ -409,9 +604,18 @@ int RunWindowed(const AppOptions& options) {
     if (options.frames != 0 && pipeline.composed >= options.frames) {
       break;
     }
+    if (options.seconds > 0.0 && Seconds(now - run_start) >= options.seconds) {
+      break;
+    }
   }
-  source->Stop();
+  capture.StopSource();
   gpu->WaitIdle();
+  if (gpu->errors().count() != 0) {
+    std::fprintf(stderr, "%u WebGPU errors during the run; last: %s\n", gpu->errors().count(),
+                 gpu->errors().last().c_str());
+    exit_code = 1;
+  }
+  std::printf("Relume exited cleanly (exit code %d)\n", exit_code);
   return exit_code;
 }
 
@@ -478,6 +682,15 @@ std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error
         return std::nullopt;
       }
       options.frames = n;
+    } else if (arg == "--seconds") {
+      const char* v = value();
+      char* end = nullptr;
+      const double sec = v != nullptr ? std::strtod(v, &end) : -1.0;
+      if (v == nullptr || end == v || *end != '\0' || sec < 0.0) {
+        error = "--seconds needs a number";
+        return std::nullopt;
+      }
+      options.seconds = sec;
     } else if (arg == "--stats") {
       const char* v = value();
       char* end = nullptr;

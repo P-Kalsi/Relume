@@ -100,6 +100,8 @@ struct CaptureStats {
   std::uint64_t dropped_invalid = 0;   // unsupported format or layout
   double copy_ms_p50 = 0.0;            // time to copy one frame out of the camera buffer
   double copy_ms_p95 = 0.0;
+  double interval_ms_p50 = 0.0;        // between consecutive capture timestamps (0 if unknown)
+  double interval_ms_p95 = 0.0;
 };
 
 // A running capture from one device. Frames are published to the
