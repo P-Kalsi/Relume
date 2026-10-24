@@ -14,3 +14,6 @@ endfunction()
 
 relume_add_gtest(test_pixel_convert SOURCES test_pixel_convert.cpp LIBS relume_core)
 relume_add_gtest(test_frame_queue SOURCES test_frame_queue.cpp LIBS relume_core)
+relume_add_gtest(test_camera_format SOURCES test_camera_format.cpp LIBS relume_core)
+relume_add_gtest(test_layout SOURCES test_layout.cpp LIBS relume_core)
+relume_add_gtest(test_app_state SOURCES test_app_state.cpp LIBS relume_core)
