@@ -11,3 +11,5 @@ function(relume_add_gtest name)
   relume_set_warnings(${name})
   gtest_discover_tests(${name} DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 120)
 endfunction()
+
+relume_add_gtest(test_pixel_convert SOURCES test_pixel_convert.cpp LIBS relume_core)

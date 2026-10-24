@@ -31,6 +31,7 @@ option(RELUME_BUILD_TESTS "Build the native C++ unit tests (GoogleTest)" ON)
 
 enable_testing()
 
+add_subdirectory(src)
 if(RELUME_BUILD_TESTS)
   add_subdirectory(tests/cpp)
 endif()
