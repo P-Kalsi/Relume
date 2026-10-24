@@ -44,3 +44,31 @@ add_library(relume_render STATIC
 target_include_directories(relume_render PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/generated")
 target_link_libraries(relume_render PUBLIC relume_core dawn::webgpu_dawn)
 relume_set_warnings(relume_render)
+
+# The Relume application.
+relume_fetch_glfw()
+add_executable(Relume
+  main.cpp
+  app/app.cpp
+  app/window.cpp
+  output/clean_window.cpp
+  ui/control_window.cpp)
+if(APPLE)
+  target_sources(Relume PRIVATE platform/macos/surface.mm)
+  target_compile_options(Relume PRIVATE $<$<COMPILE_LANGUAGE:OBJCXX>:-fobjc-arc>)
+  target_link_libraries(Relume PRIVATE "-framework Cocoa" "-framework QuartzCore")
+endif()
+target_include_directories(Relume PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_link_libraries(Relume PRIVATE relume_camera relume_render glfw)
+relume_set_warnings(Relume)
+
+# Headless smoke tests: the real pipeline from a file source to the output
+# texture and a window-sized target, checked pixel by pixel. No camera.
+add_test(NAME app_headless_smoke_bgra_720p
+  COMMAND Relume --headless --source file --pattern 1280x720 --pixel-format bgra --frames 30)
+add_test(NAME app_headless_smoke_nv12_4x3
+  COMMAND Relume --headless --source file --pattern 640x480 --pixel-format nv12 --frames 30)
+add_test(NAME app_headless_smoke_rgb_tall
+  COMMAND Relume --headless --source file --pattern 480x640 --pixel-format rgb --frames 10)
+set_tests_properties(app_headless_smoke_bgra_720p app_headless_smoke_nv12_4x3 app_headless_smoke_rgb_tall
+  PROPERTIES TIMEOUT 60)
