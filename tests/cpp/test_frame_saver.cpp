@@ -68,8 +68,8 @@ FrameSaverOptions Options(const TempDir& dir, std::uint32_t count, double interv
 TEST(FrameSaver, ValidatesOptions) {
   FrameSaverOptions options;
   options.directory = "/tmp/x";
-  options.count = 0;
-  EXPECT_FALSE(FrameSaver::Validate(options).empty());
+  options.count = 0;  // manual mode (guided capture)
+  EXPECT_TRUE(FrameSaver::Validate(options).empty());
   options.count = FrameSaver::kMaxFrames + 1;
   EXPECT_FALSE(FrameSaver::Validate(options).empty());
   options.count = FrameSaver::kMaxFrames;

@@ -7,6 +7,7 @@
 #include "relume/camera.hpp"
 #include "relume/event_queue.hpp"
 #include "relume/frame_queue.hpp"
+#include "relume/guided_capture.hpp"
 #include "relume/image_io.hpp"
 #include "relume/layout.hpp"
 #include "relume/pixel_convert.hpp"
@@ -20,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <optional>
 #include <string_view>
@@ -51,7 +53,10 @@ constexpr char kUsage[] =
     "                            lossless RGB PPM for local tests, then quit. Frames stay local.\n"
     "  --save-interval <S>       seconds between saved frames (default 1; 0 = consecutive frames)\n"
     "  --save-delay <S>          seconds to wait before the first saved frame (default 5)\n"
-    "  --save-dir <path>         where to save (default: third_party/assets/local_frames, git-ignored)\n";
+    "  --save-dir <path>         where to save (default: third_party/assets/local_frames, git-ignored)\n"
+    "  --guided-capture          off by default: take 12 stills and 2 bursts one at a time from the\n"
+    "                            Controls window, saved to the --save-dir folder (file source: UI\n"
+    "                            testing only, and only with an explicit --save-dir)\n";
 
 using Clock = std::chrono::steady_clock;
 
@@ -75,8 +80,8 @@ struct VideoPipeline {
       ++rejected;
       return false;
     }
-    if (saver != nullptr) {
-      saver->Offer(*frame, std::chrono::steady_clock::now());
+    if (on_frame) {
+      on_frame(*frame);
     }
     compositor.Compose(uploader.camera_texture());
     showing_video = true;
@@ -103,7 +108,7 @@ struct VideoPipeline {
   std::uint64_t composed = 0;
   std::uint64_t rejected = 0;
   bool showing_video = false;
-  FrameSaver* saver = nullptr;  // only with --save-frames
+  std::function<void(const VideoFrame&)> on_frame;  // only with --save-frames or --guided-capture
 };
 
 bool ParseSize(std::string_view text, std::uint32_t& width, std::uint32_t& height) {
@@ -779,7 +784,24 @@ int RunWindowed(const AppOptions& options) {
     }
     std::printf("Saving %u camera frames to %s (interval %.2f s, first after %.1f s); nothing leaves this Mac\n",
                 options.save.count, options.save.directory.c_str(), options.save.interval_s, options.save.delay_s);
-    pipeline.saver = &*saver;
+    pipeline.on_frame = [&saver](const VideoFrame& frame) { saver->Offer(frame, Clock::now()); };
+  }
+  std::optional<GuidedCapture> guided;
+  if (options.guided_capture) {
+    FrameSaverOptions manual = options.save;
+    manual.count = 0;
+    saver.emplace(manual);
+    if (!saver->error().empty()) {
+      std::fprintf(stderr, "FAIL: --guided-capture: %s\n", saver->error().c_str());
+      return 1;
+    }
+    guided.emplace(*saver, DefaultCapturePlan());
+    std::printf("Guided capture: shots are saved in %s; nothing leaves this Mac\n", options.save.directory.c_str());
+#ifndef NDEBUG
+    std::printf("Guided capture: warning: this is a Debug build; converting a 720p NV12 frame takes about 50 ms, "
+                "so 30 fps bursts will fail. Use the Release build for real captures.\n");
+#endif
+    pipeline.on_frame = [&guided](const VideoFrame& frame) { guided->OnFrame(frame, Clock::now()); };
   }
 
   CameraEventQueue events;
@@ -813,6 +835,13 @@ int RunWindowed(const AppOptions& options) {
     tester.emplace(output.window(), controls.window());
     occluder_occlusion.emplace("occluder", tester->occluder());
   }
+  // --guided-self-test: one still, then the first burst, clicked by script.
+  // Criteria (fixed in advance): both shots are saved, the burst folder holds
+  // all of its frames, and no loop iteration takes over 50 ms while a shot is
+  // being captured or written (the loop never waits for the disk).
+  enum class SelfTest : std::uint8_t { kIdle, kStill, kBurst, kDone } self_test = SelfTest::kIdle;
+  double self_test_max_iteration_ms = 0.0;
+  bool self_test_failed = false;
   while (!controls.should_close()) {
     next_tick += tick;
     if (next_tick < Clock::now()) {
@@ -868,13 +897,52 @@ int RunWindowed(const AppOptions& options) {
     trace.Mark("output");
 
     ControlsModel model;
+    if (guided) {
+      guided->Update(Clock::now());
+      model.guided = &*guided;
+      model.now = Clock::now();
+    }
     model.status = status;
     model.output_visible = output.visible();
     capture.FillModel(model);
     const ControlsActions actions = controls.Render(model);
     trace.Mark("controls");
+    if (guided && actions.guided_select) {
+      guided->Select(*actions.guided_select);
+    }
+    if (guided && actions.guided_capture) {
+      guided->StartCapture(Clock::now());
+      std::printf("[guided] %s: countdown started\n", guided->step(guided->current()).name.c_str());
+    }
     if (actions.toggle_output) {
       output.visible() ? output.Hide() : output.Show();
+    }
+    if (guided && options.guided_self_test) {
+      if (guided->busy()) {
+        self_test_max_iteration_ms = std::max(
+            self_test_max_iteration_ms, std::chrono::duration<double, std::milli>(iteration_start - previous_start).count());
+      }
+      std::size_t burst = 0;
+      while (burst < guided->size() && guided->step(burst).kind != CaptureStep::Kind::kBurst) {
+        ++burst;
+      }
+      if (self_test == SelfTest::kIdle && t >= 1.0) {
+        guided->Select(0);
+        guided->StartCapture(Clock::now());
+        self_test = SelfTest::kStill;
+      } else if (self_test == SelfTest::kStill && !guided->busy()) {
+        guided->Select(burst);
+        guided->StartCapture(Clock::now());
+        self_test = SelfTest::kBurst;
+      } else if (self_test == SelfTest::kBurst && !guided->busy()) {
+        self_test = SelfTest::kDone;
+        break;
+      }
+      if (t > 30.0) {
+        std::fprintf(stderr, "FAIL: guided self-test timed out\n");
+        self_test_failed = true;
+        break;
+      }
     }
     if (actions.select_device && capture.Select(*actions.select_device)) {
       pipeline.ResetFrameIds();
@@ -915,7 +983,7 @@ int RunWindowed(const AppOptions& options) {
     if (options.frames != 0 && pipeline.composed >= options.frames) {
       break;
     }
-    if (saver && saver->done()) {
+    if (saver && !guided && saver->done()) {
       break;
     }
     if (options.seconds > 0.0 && Seconds(now - run_start) >= options.seconds) {
@@ -923,8 +991,35 @@ int RunWindowed(const AppOptions& options) {
     }
   }
   capture.StopSource();
-  if (saver) {
-    pipeline.saver = nullptr;
+  pipeline.on_frame = nullptr;
+  if (guided) {
+    std::printf("Guided capture: %u of %u stills and %u of %u bursts on disk; %u files written this session\n",
+                guided->saved_stills(), guided->stills_total(), guided->saved_bursts(), guided->bursts_total(),
+                guided->files_written());
+    for (std::size_t i = 0; i < guided->size(); ++i) {
+      std::printf("  %-9s %-9s %s\n", guided->step(i).name.c_str(), ToString(guided->status(i)).data(),
+                  guided->message(i).c_str());
+    }
+    if (options.guided_self_test) {
+      std::size_t burst = 0;
+      while (burst < guided->size() && guided->step(burst).kind != CaptureStep::Kind::kBurst) {
+        ++burst;
+      }
+      const bool still_ok = guided->status(0) == ShotStatus::kSaved;
+      const bool burst_ok = guided->status(burst) == ShotStatus::kSaved;
+      const bool files_ok = guided->files_written() == 1 + guided->step(burst).frames;
+      const bool timing_ok = self_test_max_iteration_ms <= 50.0;
+      std::printf("Guided self-test: still %s, burst %s, files %u (expected %u), max iteration while capturing "
+                  "%.1f ms (limit 50), skipped by busy writer %u\n",
+                  still_ok ? "saved" : "NOT saved", burst_ok ? "saved" : "NOT saved", guided->files_written(),
+                  1 + guided->step(burst).frames, self_test_max_iteration_ms, saver->skipped_busy());
+      const bool pass = !self_test_failed && self_test == SelfTest::kDone && still_ok && burst_ok && files_ok && timing_ok;
+      std::printf(pass ? "GUIDED SELF-TEST PASS\n" : "GUIDED SELF-TEST FAIL\n");
+      if (!pass) {
+        exit_code = 1;
+      }
+    }
+  } else if (saver) {
     for (const std::string& path : saver->paths()) {
       std::printf("Saved %s\n", path.c_str());
     }
@@ -1117,6 +1212,10 @@ std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error
         return std::nullopt;
       }
       (arg == "--save-interval" ? options.save.interval_s : options.save.delay_s) = sec;
+    } else if (arg == "--guided-capture") {
+      options.guided_capture = true;
+    } else if (arg == "--guided-self-test") {
+      options.guided_self_test = true;
     } else if (arg == "--save-dir") {
       const char* v = value();
       if (v == nullptr || *v == '\0') {
@@ -1138,6 +1237,25 @@ std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error
     options.file.format = pixel_format_set ? options.pixel_format : PixelFormat::kBgra8;
   } else if (options.pixel_format == PixelFormat::kRgb8) {
     error = "--pixel-format rgb is only available for the file source";
+    return std::nullopt;
+  }
+  if (options.guided_capture && options.save.count > 0) {
+    error = "use either --guided-capture or --save-frames, not both";
+    return std::nullopt;
+  }
+  if (options.guided_self_test && (!options.guided_capture || options.source != AppOptions::Source::kFile)) {
+    error = "--guided-self-test needs --guided-capture --source file";
+    return std::nullopt;
+  }
+  if (options.guided_capture && options.headless) {
+    error = "--guided-capture needs the Controls window";
+    return std::nullopt;
+  }
+  // The file source is allowed for testing the UI, but never into the default
+  // folder, which must hold only real webcam frames for the comparison.
+  if (options.guided_capture && options.source == AppOptions::Source::kFile &&
+      options.save.directory == RELUME_DEFAULT_FRAME_DIR) {
+    error = "--guided-capture with --source file needs an explicit --save-dir outside local_frames";
     return std::nullopt;
   }
   if (options.save.count > 0 && (options.source != AppOptions::Source::kCamera || options.headless)) {

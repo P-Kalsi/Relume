@@ -13,7 +13,8 @@ add_library(relume_core STATIC
   core/stats.cpp
   core/event_queue.cpp
   core/image_io.cpp
-  core/frame_saver.cpp)
+  core/frame_saver.cpp
+  core/guided_capture.cpp)
 target_include_directories(relume_core PUBLIC "${PROJECT_SOURCE_DIR}/include")
 target_link_libraries(relume_core PUBLIC Threads::Threads)
 relume_set_warnings(relume_core)
@@ -107,3 +108,13 @@ set_tests_properties(app_headless_smoke_bgra_720p app_headless_smoke_nv12_4x3 ap
 add_test(NAME app_window_occlusion
   COMMAND Relume --source file --pixel-format nv12 --occlusion-test --stats 0)
 set_tests_properties(app_window_occlusion PROPERTIES TIMEOUT 180 LABELS display)
+
+# Guided capture in the real app with the file source (never the camera, and
+# never the local_frames folder): scripted Capture of one still and one burst.
+# RGB frames, because a Debug build needs about 51 ms to convert a 720p NV12
+# frame, too slow for a 30 fps burst (Release: about 5 ms). Opens windows, so
+# it is in the `display` set too.
+add_test(NAME app_guided_capture_self_test
+  COMMAND Relume --source file --pixel-format rgb --guided-capture --guided-self-test --stats 0
+          --save-dir "${CMAKE_CURRENT_BINARY_DIR}/guided_self_test")
+set_tests_properties(app_guided_capture_self_test PROPERTIES TIMEOUT 60 LABELS display)

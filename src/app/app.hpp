@@ -24,6 +24,8 @@ struct AppOptions {
   bool trace = false;                     // log the phases of slow render-loop iterations
   bool occlusion_test = false;            // cover/uncover the windows on a schedule and check the loop
   FrameSaverOptions save;                 // --save-frames: off unless save.count > 0 (camera only)
+  bool guided_capture = false;            // --guided-capture: shots taken from the Controls window
+  bool guided_self_test = false;          // with --guided-capture --source file: script one still and one burst
 };
 
 // Parses command-line arguments. Returns nullopt and sets `error` (which may

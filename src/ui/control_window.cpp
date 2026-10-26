@@ -9,6 +9,8 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_wgpu.h>
 
+#include <algorithm>
+#include <cmath>
 #include <cstdint>
 
 namespace relume {
@@ -155,6 +157,10 @@ ControlsActions ControlWindow::BuildUi(const ControlsModel& model) {
     actions.toggle_output = true;
   }
 
+  if (model.guided != nullptr) {
+    BuildGuidedCapture(*model.guided, model.now, actions);
+  }
+
   // Preview of the clean output, aspect-fit into the remaining space.
   ImGui::Separator();
   const ImVec2 avail = ImGui::GetContentRegionAvail();
@@ -168,6 +174,81 @@ ControlsActions ControlWindow::BuildUi(const ControlsModel& model) {
   }
   ImGui::End();
   return actions;
+}
+
+// Guided capture: instructions, countdown and progress for local test shots.
+// Everything here is drawn in the Controls window only.
+void ControlWindow::BuildGuidedCapture(const GuidedCapture& guided, GuidedCapture::Clock::time_point now,
+                                       ControlsActions& actions) {
+  ImGui::Separator();
+  const std::size_t index = guided.current();
+  const CaptureStep& step = guided.step(index);
+  const ShotStatus status = guided.status(index);
+  const bool still = step.kind == CaptureStep::Kind::kStill;
+  const bool busy = guided.busy();
+
+  ImGui::TextColored({0.55f, 0.75f, 1.0f, 1.0f}, "Guided capture  |  shot %zu of %zu", index + 1, guided.size());
+  ImGui::SameLine();
+  ImGui::TextDisabled("(saved locally in %s; nothing is uploaded)", guided.directory().c_str());
+  ImGui::BeginDisabled(busy);
+  ImGui::SetNextItemWidth(360.0f);
+  char label[160];
+  std::snprintf(label, sizeof(label), "%02zu  %s  [%s]", index + 1, step.title.c_str(), ToString(status).data());
+  if (ImGui::BeginCombo("Shot", label)) {
+    for (std::size_t i = 0; i < guided.size(); ++i) {
+      std::snprintf(label, sizeof(label), "%02zu  %s  [%s]", i + 1, guided.step(i).title.c_str(),
+                    ToString(guided.status(i)).data());
+      if (ImGui::Selectable(label, i == index)) {
+        actions.guided_select = i;
+      }
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("< Previous") && index > 0) {
+    actions.guided_select = index - 1;
+  }
+  ImGui::SameLine();
+  if (ImGui::Button("Next >") && index + 1 < guided.size()) {
+    actions.guided_select = index + 1;
+  }
+  ImGui::EndDisabled();
+
+  ImGui::TextUnformatted(step.title.c_str());
+  ImGui::TextWrapped("%s", step.instruction.c_str());
+
+  const bool taken = status == ShotStatus::kSaved || status == ShotStatus::kFailed;
+  const char* button = still ? (taken ? "Retake" : "Capture Frame") : (taken ? "Retake burst" : "Start burst");
+  ImGui::BeginDisabled(busy);
+  if (ImGui::Button(button, {160.0f, 0.0f})) {
+    actions.guided_capture = true;
+  }
+  ImGui::EndDisabled();
+  ImGui::SameLine();
+  switch (status) {
+    case ShotStatus::kCountdown: {
+      ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.6f);
+      ImGui::TextColored({0.95f, 0.80f, 0.30f, 1.0f}, "Capturing in %.0f ...",
+                         std::max(1.0, std::ceil(guided.countdown_remaining(now))));
+      ImGui::PopFont();
+      break;
+    }
+    case ShotStatus::kCapturing:
+      if (still) {
+        ImGui::TextColored({0.95f, 0.80f, 0.30f, 1.0f}, "Capturing ...");
+      } else {
+        ImGui::TextColored({0.95f, 0.80f, 0.30f, 1.0f}, "Capturing: hold still (%u of %u frames)",
+                           guided.burst_progress(), step.frames);
+      }
+      break;
+    case ShotStatus::kWriting: ImGui::TextColored({0.95f, 0.80f, 0.30f, 1.0f}, "Writing to disk ..."); break;
+    case ShotStatus::kSaved: ImGui::TextColored({0.35f, 0.85f, 0.45f, 1.0f}, "%s", guided.message(index).c_str()); break;
+    case ShotStatus::kFailed: ImGui::TextColored({0.95f, 0.40f, 0.35f, 1.0f}, "%s", guided.message(index).c_str()); break;
+    case ShotStatus::kNotTaken: ImGui::TextDisabled("Not taken yet"); break;
+  }
+  ImGui::Text("Saved on disk: %u of %u stills, %u of %u bursts  |  files written this session: %u",
+              guided.saved_stills(), guided.stills_total(), guided.saved_bursts(), guided.bursts_total(),
+              guided.files_written());
 }
 
 ControlsActions ControlWindow::Render(const ControlsModel& model) {

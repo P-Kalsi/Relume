@@ -8,6 +8,7 @@
 #include "app/window.hpp"
 #include "relume/app_state.hpp"
 #include "relume/camera.hpp"
+#include "relume/guided_capture.hpp"
 #include "relume/renderer.hpp"
 
 #include <optional>
@@ -25,12 +26,16 @@ struct ControlsModel {
   std::string warning;             // e.g. missing colour metadata
   bool camera_selectable = true;   // false for the file source
   bool output_visible = true;
+  const GuidedCapture* guided = nullptr;  // --guided-capture only
+  GuidedCapture::Clock::time_point now{};  // for the guided-capture countdown
 };
 
 // What the user asked for this frame.
 struct ControlsActions {
   std::optional<std::string> select_device;  // already confirmed for virtual cameras
   bool toggle_output = false;
+  std::optional<std::size_t> guided_select;  // move to another shot
+  bool guided_capture = false;               // Capture / Retake / Start burst
 };
 
 class ControlWindow {
@@ -58,6 +63,8 @@ class ControlWindow {
 
  private:
   ControlsActions BuildUi(const ControlsModel& model);
+  void BuildGuidedCapture(const GuidedCapture& guided, GuidedCapture::Clock::time_point now,
+                          ControlsActions& actions);
 
   const GpuContext& gpu_;
   const OutputTexture& output_;

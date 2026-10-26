@@ -71,6 +71,7 @@ session; excluded from the presets above):
 
 ```sh
 ctest --preset display      # app_window_occlusion: cover/resize/minimize, fails if presentation blocks
+                            # app_guided_capture_self_test: scripted guided still + burst (file source)
 ```
 
 ## 3. Run Relume
@@ -88,6 +89,17 @@ open -W -n --stdout "$PWD/relume.log" --stderr "$PWD/relume.log" \
 #   --presenter layer|surface  window presentation (default layer; surface is the
 #                              CAMetalLayer fallback, which can freeze ~1 s on cover)
 #   --trace                    log the phases of render-loop iterations over 50 ms
+
+# Local webcam test frames for the preprocessing comparison (opt-in; frames
+# stay on this Mac in the git-ignored third_party/assets/local_frames/).
+# Use the Release build: a Debug build converts a 720p frame in about 50 ms,
+# too slow for 30 fps bursts (Release: about 5 ms).
+open -W -n --stdout "$PWD/relume.log" --stderr "$PWD/relume.log" \
+  build/release/src/Relume.app --args --guided-capture && cat relume.log
+#   Guided: 12 stills and 2 bursts of 20 consecutive frames, taken one at a time
+#   from the Controls window (Capture Frame, 3 s countdown, Retake). A shot counts
+#   as saved only after the file is written; a broken burst keeps nothing.
+#   --save-frames <N> [--save-interval S] [--save-delay S] saves on a timer instead.
 
 # File source (no camera, no permission; can be run directly)
 build/debug/src/Relume.app/Contents/MacOS/Relume --source file --pixel-format nv12

@@ -14,7 +14,7 @@ agreement and differences only; it makes no accuracy claims.
 Images: each pinned upstream demo image at its original aspect, plus a
 webcam-like 1280x720 (16:9) centre crop of it, plus any local frames you put
 in third_party/assets/local_frames/ (git-ignored, optional; Relume's
---save-frames writes them there). Image files directly in that folder are
+--save-frames and --guided-capture write them there). Image files directly in that folder are
 stills; each subfolder is a burst of consecutive frames (sorted by name),
 used for the frame-to-frame stability metric.
 
@@ -123,7 +123,9 @@ def local_frames() -> tuple[list[Path], dict[str, list[Path]]]:
         return sorted(p for p in folder.glob("*") if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".ppm"})
     if not LOCAL_FRAMES.is_dir():
         return [], {}
-    bursts = {d.name: images_in(d) for d in sorted(LOCAL_FRAMES.iterdir()) if d.is_dir()}
+    # *.partial folders are bursts still being written (or abandoned); never used.
+    bursts = {d.name: images_in(d) for d in sorted(LOCAL_FRAMES.iterdir())
+              if d.is_dir() and not d.name.endswith(".partial")}
     return images_in(LOCAL_FRAMES), {k: v for k, v in bursts.items() if len(v) >= 2}
 
 
