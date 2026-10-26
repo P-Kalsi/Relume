@@ -1,8 +1,10 @@
-# Relume architecture (as of Phase 2)
+# Relume architecture (as of Phase 3)
 
-Phase 2 is camera passthrough: frames go from a camera (or file source) into
-a fixed 1280×720 output texture shown in two windows. There is no inference
-yet; ONNX Runtime arrives in Phase 3.
+Frames go from a camera (or file source) into a fixed 1280×720 output
+texture shown in two windows; the output is still camera passthrough
+(relighting is Phase 4). Since Phase 3, a depth worker runs Depth Anything V2
+Small on the newest frame with ONNX Runtime (CPU, or the CoreML EP), and the
+Controls window shows the depth beside the output, aligned pixel for pixel.
 
 ## Data flow
 
@@ -31,15 +33,60 @@ OutputCompositor: aspect-fit, black bars → OutputTexture (RGBA8, fixed 1280×7
 - **Windows never sample the camera texture.** `Presenter` accepts only an
   `OutputTexture`, which keeps it that way.
 
+### Depth (Phase 3)
+
+```text
+LatestFrameSlot ──(WaitTakeIfNew: newest frame, never removes it)──► DepthWorker thread
+                   ToRgb8 → release the camera frame → Preprocessor (stretch default)
+                   → IDepthEstimator::Run (ONNX Runtime CPU or CoreML EP)
+                   → DepthResult (recycled pool of 4: depth 448×448, transform, frame ID,
+                     camera generation, arrival time, display range, timings)
+                                          ▼
+                                  LatestDepthSlot (newest result only)
+                                          │ main thread: TakeIfNew(active worker generation)
+                                          ▼
+DepthTracker: MatchDepth (camera generation, source size, transform) — anything else is never shown
+                                          ▼
+DepthUploader: WriteTexture of the valid region only → R32Float (new_w × new_h)
+DepthVisualizer (depth_vis.wgsl): same FitRect as the output, DepthToSource's bilinear mapping
+                                          ▼
+DepthDebugTexture (RGBA8, fixed 1280×720) ──► ImGui::Image → Controls window only
+```
+
+- **Consumers are independent.** Taking a frame never removes it; the
+  renderer and the worker each keep their own last-seen frame, so neither can
+  starve the other. The worker waits on a condition variable; publishing only
+  notifies and never waits.
+- **The worker never holds a camera frame during inference.** It converts the
+  frame to RGB and releases it before preprocessing and `Run`, so a 300 ms
+  run cannot exhaust the 4-frame pool. Frames that arrive meanwhile are
+  skipped, never queued.
+- **Camera generation.** `LatestFrameSlot` counts `Clear()` calls; the capture
+  controller clears it whenever a source stops. Frames and depth results carry
+  that generation, and a source numbers its frames from 1 again, so "new" means
+  a different (generation, frame ID).
+- **Depth is never shown out of place.** The renderer uses a result only if
+  its camera generation, source size and transform match the image being
+  shown; otherwise the depth view is black. The label gives the depth's age
+  and frame lag; only lag 0 is "in sync".
+- **`DepthDebugTexture` is not an `OutputTexture`.** No presenter accepts it,
+  so the Output window cannot show depth.
+- **Allocation:** the estimator's input and output tensors are created once
+  over its own buffers and results come from a pool, so Relume allocates
+  nothing per run. ONNX Runtime's internal allocations are not claimed to be
+  zero.
+
 ## Modules
 
 | Library | Contents | Platform code |
 |---|---|---|
-| `relume_core` | `VideoFrame`, CPU colour conversion, frame pool/slot, format negotiation, `FitRect`, status derivation, event queue, PPM I/O, latency histogram | none |
+| `relume_core` | `VideoFrame`, CPU colour conversion, frame pool/slot, format negotiation, `FitRect`, status derivation, event queue, PPM I/O, latency histograms, opt-in frame saving and guided capture, the preprocessing contract (`Preprocessor`, `DepthToSource`), `IDepthEstimator`, `DepthWorker`, `InferenceController` | none |
+| `relume_inference` | `OnnxDepthEstimator` (ONNX Runtime C++ API; CPU and CoreML EP) | none (links ONNX Runtime) |
 | `relume_camera` | `FileSource`; `avfoundation.mm` on macOS, `camera_stub.cpp` elsewhere | `.mm` only |
-| `relume_render` | `GpuContext`, `OutputTexture`, `FrameUploader`, `OutputCompositor`, `Presenter`, readback (tests only); WGSL embedded at build time | none (WebGPU) |
+| `relume_render` | `GpuContext`, `OutputTexture`, `FrameUploader`, `OutputCompositor`, `Presenter`, `DepthDebugTexture`, `DepthUploader`, `DepthVisualizer`, readback (tests only); WGSL embedded at build time | none (WebGPU) |
 | `relume_imgui` | Dear ImGui 1.93.0 + GLFW/WebGPU backends | third party |
-| `Relume` (app) | `CaptureController`, windows, Controls UI, Output window, `main` | `platform/macos/surface.mm` |
+| `Relume` (app) | `CaptureController`, `DepthTracker`, `DepthView`, windows, Controls UI, Output window, `main` | `platform/macos/*.mm` |
+| `relume_depth` (tool) | native preprocessing + ONNX Runtime from the command line: parity, benchmarks, CoreML evidence | none |
 
 The portable interfaces are `ICameraSystem` and `ICameraSource`
 (`include/relume/camera.hpp`). A Windows port would add a Media Foundation
@@ -53,6 +100,14 @@ adapter and a `surface` implementation; nothing else is platform-specific.
 | AVFoundation session queue (serial GCD) | configure, `startRunning`, `stopRunning` | `Stop()` uses `dispatch_sync` |
 | AVFoundation frame queue (serial GCD) | sample-buffer callback: copy + publish | drained with `dispatch_sync` after the delegate is detached |
 | FileSource thread | paced copy + publish | always joined by `Stop()` or the destructor |
+| DepthWorker thread (one active, at most one retiring) | creates, warms up, runs and destroys its ONNX Runtime session; RGB conversion; preprocessing; display range | stop flag + `Terminate()` + wake; joined by the main thread only once `finished()` is true; at exit after the windows are hidden (logged; a CoreML compile in progress cannot be interrupted) |
+| ONNX Runtime intra-op pool (4 threads by default) | inside `Run` | owned by the session |
+| FrameSaver writer (only with `--save-frames` or `--guided-capture`) | RGB conversion and PPM writes of its own copies | joined by the destructor |
+
+- **The main thread never calls ONNX Runtime and never waits for a worker.**
+  `InferenceController` retires a worker on a settings change (Off, CPU,
+  CoreML compute units) and coalesces rapid changes; see `docs/decisions.md`.
+- **Workers never call Dawn.** All WebGPU calls stay on the main thread.
 
 - `Stop()` refuses to run on the source's own queues, which would deadlock.
 - Notification blocks hold only shared state (`EventRelay`, a failure flag),
@@ -204,8 +259,13 @@ dropped as unread, not queued.
 - No microphone is opened. Device notifications for non-video devices are
   ignored.
 - No network calls, and signing uses `--timestamp=none`.
-- No frames are written to disk. `ReadbackTexture` exists only for tests and
-  the headless self-check.
+- No frames are written to disk by default. Only `--save-frames` and
+  `--guided-capture`, which the user must pass, save camera frames, to the
+  git-ignored `third_party/assets/local_frames/`. `ReadbackTexture` exists
+  only for tests and the headless self-check.
+- Inference is on the device (ONNX Runtime, CPU or CoreML). The CoreML compile
+  cache (`~/Library/Caches/dev.relume.app/coreml/`) holds compiled models
+  only, never frames.
 - `imgui.ini` writing is disabled.
 - Camera permission goes through the standard macOS prompt; `Relume.app` must
   be launched with `open`.

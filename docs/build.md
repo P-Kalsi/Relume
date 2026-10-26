@@ -30,6 +30,9 @@ RELUME_PYTHON=python3.12 scripts/setup_python.sh   # force an interpreter
 .venv/bin/python scripts/export.py             # -> models/depth_anything_v2_small_448.onnx + manifest
 .venv/bin/python scripts/check_parity.py       # PyTorch vs ONNX Runtime CPU; exits non-zero on failure
 .venv/bin/python scripts/compare_preprocessing.py   # letterbox/stretch/upstream comparison (stretch is the default)
+.venv/bin/python scripts/benchmark_coreml.py        # CoreML matrix: evidence (a)/(b)/(c), latency, FP32 parity
+                                                    # vs CPU incl. local frames -> docs/coreml_results.json (~20 min)
+.venv/bin/python scripts/summarize_ort_profile.py <profile.json> --skip 2   # kernel time per provider per run
 .venv/bin/python scripts/check_native_parity.py     # C++ pipeline (relume_depth, release build) vs Python
                                                     # preprocessing, Python ORT and PyTorch -> docs/native_parity_results.json
 .venv/bin/python -m pytest tests/python -v
@@ -132,6 +135,7 @@ $R bench --threads 4 --runs 50                   # synthetic 1280x720; p50/p95 p
 $R bench --image some.ppm --method letterbox     # a PPM input; stretch is the default method
 $R run --image in.ppm --out-depth d.npy [--out-tensor t.npy]   # prints the transform as JSON
 $R run-tensor --tensor t.npy --out-depth d.npy  # ORT only, on a given 1x3x448x448 float32 tensor
+$R run-tensors --list jobs.txt                   # many "<in.npy> <out.npy>" lines, one session
 # --provider cpu|coreml --units ALL|CPUOnly|CPUAndGPU|CPUAndNeuralEngine --strict
 # --profile <prefix> (ORT profiling JSON) --cache <dir> --compute-plan --verbose
 ```

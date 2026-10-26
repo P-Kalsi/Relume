@@ -453,6 +453,57 @@ Output window is resized and minimized, on a fixed schedule).
   waits; Release throughput at 720p NV12 is checked by hand (6 of 6 with CPU
   inference running, 0 frames skipped).
 
+### CoreML EP matrix (Step 7) — results; default decision pending (gate 2)
+
+Measured with `scripts/benchmark_coreml.py` (native `relume_depth`, ONNX
+Runtime 1.31.0, MLProgram, static shapes, 4 CPU threads, Release, M2,
+macOS 14.8.9). Full numbers: `docs/coreml_results.json`; logs and local
+comparison panels: `build/coreml_bench/` (git-ignored).
+
+**Evidence, by level** (identical for all four compute-unit settings):
+- (a) Assignment: strict mode (`session.disable_cpu_ep_fallback`) is refused
+  for every setting. GetCapability: **13 partitions, 481 of 517 nodes
+  supported**; ORT placed 13 fused CoreML nodes and 36 `Gather` nodes on CPU
+  (the q/k/v selects in the 12 attention blocks, 3 each). Every setting is
+  therefore **partial CoreML (481 of 517 nodes, 13 partitions)**. Removing the
+  Gathers would need a model change, which was not made.
+- (b) Execution: ORT profiling attributes kernel time to
+  `CoreMLExecutionProvider` on every run (13 events per run) and 2.5–3.1 ms
+  per run to the 36 CPU Gathers.
+- (c) Planned hardware (compute plan): CPUOnly and **CPUAndNeuralEngine plan
+  all 481 ops on the CPU**; CPUAndGPU and ALL plan all 481 on the GPU. The
+  Neural Engine is planned for no op in any setting. This is the planned
+  placement; per-run hardware use was not observed (that needs privileged
+  tools, not run).
+
+| Setting | Session create cold / warm | Run p50 / p95 (200 runs) | Peak RSS | FP32 parity vs CPU (74 inputs) |
+|---|---|---|---|---|
+| CPU (reference) | 0.29 s / 0.12 s | 316 / 328 ms | 352 MiB | — |
+| CoreML CPUOnly | 44 s / 10.9 s | 268 / 276 ms | 904 MiB | passes (74/74) |
+| CoreML CPUAndGPU | 87 s / 16.2 s | 121 / 177 ms | 555 MiB | passes (74/74) |
+| CoreML CPUAndNeuralEngine | 64 s / 10.8 s | 518 / 525 ms | 1843 MiB | passes (74/74) |
+| CoreML ALL | 107 s / 16.0 s | 122 / 187 ms | 628 MiB | passes (74/74) |
+
+- **Parity** uses the unchanged FP32 working tolerances, against C++ CPU on
+  identical tensors: 22 fixtures, 12 local stills, 40 burst frames. Worst
+  rel_max 2.9e-5 (tolerance 4e-4), worst mean/range 1.9e-6 (2e-5), Pearson
+  1.000000; edge, non-edge and subject errors are all below 1e-6 of the range;
+  burst flicker equals CPU's (ratio 1.00 for both bursts). Every setting is
+  "passes FP32 parity: eligible for default". From these errors, the GPU
+  settings appear to compute in FP32 here; that is inferred from the measured
+  error, not assumed. No FP16 thresholds are needed for these settings.
+- **Live cost** (Relume.app Release, file source 1280×720 NV12 30 fps,
+  windows open, after Ready): composed 30.0 fps and 0 pool drops in every
+  setting; render-loop p95 16.9 ms (CPU), 17.7 (CPUOnly), 17.5 (CPUAndGPU),
+  17.0 (CPUAndNeuralEngine), 18.3 (ALL); max interval 18–33 ms. Depth results/s
+  2.9 (CPU), 3.5, 7.0, 1.7, 6.8; depth age p50 375, 318, 167, 626, 169 ms.
+  Memory up to 337, 367, 551, 1428, 563 MiB. CoreML's GPU work did not
+  measurably slow the Dawn render loop in these runs. Camera runs are Step 8.
+- **Costs of the GPU settings:** session creation takes about 16 s even with
+  a filled compile cache (87–107 s the first time), during which the status is
+  Loading and the output stays passthrough; memory is about 200 MiB higher.
+- **Default:** CPU stays the default until the developer decides (gate 2).
+
 ### Known limitations (recorded, out of Phase 3 scope)
 
 - **Facial depth is fairly smooth.** In several frames, both letterbox and

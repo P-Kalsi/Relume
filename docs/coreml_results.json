@@ -1,0 +1,1156 @@
+{
+ "description": "CoreML EP matrix on the native pipeline (relume_depth, ONNX Runtime 1.31.0): evidence per level, latency and FP32 parity against C++ CPU on identical tensors",
+ "evidence_levels": {
+  "a_assignment": "strict mode (diagnostic), GetCapability partitions/nodes, nodes placed per provider",
+  "b_execution": "ORT profiling: kernel time per provider per run, warm-ups excluded",
+  "c_planned_hardware": "CoreML compute plan (ProfileComputePlan): planned device per op; not proof of what ran on each inference",
+  "not_proof": "output differences and latency are never treated as proof of CoreML or ANE execution"
+ },
+ "tolerances": {
+  "working": {
+   "max_abs": 0.002,
+   "rel_max": 0.0004,
+   "mean_abs_over_range": 2e-05
+  },
+  "hard_ceilings": {
+   "rel_max": 0.001,
+   "mean_abs_over_range": 0.0001
+  }
+ },
+ "inputs": {
+  "fixtures": 22,
+  "local_stills": 12,
+  "local_bursts": {
+   "burst_a": 20,
+   "burst_b": 20
+  },
+  "local_method": "stretch"
+ },
+ "configs": {
+  "cpu": {
+   "label": "CPU",
+   "assignment": {
+    "placed": {}
+   },
+   "runtime_profile": {
+    "file": "profile_cpu_2026-10-26_03-24-48_210.json",
+    "runs_total": 12,
+    "runs_measured": 10,
+    "model_run_ms_mean": 300.6191,
+    "providers": {
+     "CPUExecutionProvider": {
+      "kernel_events_per_run": 497.0,
+      "kernel_ms_per_run": 299.34319999999997
+     }
+    }
+   },
+   "session_create_cold_ms": 290.2,
+   "session_create_warm_ms": 117.3,
+   "latency": {
+    "runs": 200,
+    "warmup": 10,
+    "run_p50_ms": 315.724,
+    "run_p95_ms": 328.127,
+    "run_min_ms": 292.322,
+    "run_max_ms": 347.432,
+    "preprocess_p50_ms": 1.885,
+    "total_p50_ms": 318.215,
+    "total_p95_ms": 330.656
+   },
+   "peak_resident_mib": 352.3
+  },
+  "CPUOnly": {
+   "label": "CoreML CPUOnly",
+   "strict_all_nodes_on_coreml": {
+    "session_created": false,
+    "error": "load failed (/Users/prakitkalsi/Developer/Relume/models/depth_anything_v2_small_448.onnx): ONNX Runtime: This session contains graph nodes that are assigned to the default CPU EP, but fallback to CPU EP has been explicitly disabled by the user.",
+    "note": "diagnostic only; not the deployment configuration"
+   },
+   "assignment": {
+    "coreml_partitions": 13,
+    "graph_nodes": 517,
+    "coreml_supported_nodes": 481,
+    "placed": {
+     "CoreMLExecutionProvider": {
+      "nodes": 13,
+      "op_types": {
+       "fused CoreML partition": 13
+      }
+     },
+     "CPUExecutionProvider": {
+      "nodes": 36,
+      "op_types": {
+       "Gather": 36
+      }
+     }
+    }
+   },
+   "compute_plan": {
+    "ops_planned": 481,
+    "devices": {
+     "MLCPUComputeDevice": 481
+    },
+    "by_op": {
+     "MLCPUComputeDevice:ios17.reshape": 125,
+     "MLCPUComputeDevice:ios17.mul": 60,
+     "MLCPUComputeDevice:ios17.transpose": 53,
+     "MLCPUComputeDevice:ios17.linear": 48,
+     "MLCPUComputeDevice:ios17.add": 47,
+     "MLCPUComputeDevice:ios17.conv": 31,
+     "MLCPUComputeDevice:ios17.layer_norm": 28,
+     "MLCPUComputeDevice:ios17.matmul": 24,
+     "MLCPUComputeDevice:ios16.relu": 16,
+     "MLCPUComputeDevice:ios16.softmax": 12,
+     "MLCPUComputeDevice:ios17.real_div": 12,
+     "MLCPUComputeDevice:ios16.erf": 12,
+     "MLCPUComputeDevice:ios17.slice_by_index": 4,
+     "MLCPUComputeDevice:ios16.resize_bilinear": 4,
+     "MLCPUComputeDevice:ios17.conv_transpose": 2,
+     "MLCPUComputeDevice:ios17.concat": 1,
+     "MLCPUComputeDevice:ios16.upsample_bilinear": 1,
+     "MLCPUComputeDevice:ios17.squeeze": 1
+    }
+   },
+   "runtime_profile": {
+    "file": "profile_CPUOnly_2026-10-26_03-26-50_043.json",
+    "runs_total": 12,
+    "runs_measured": 10,
+    "model_run_ms_mean": 265.6721,
+    "providers": {
+     "CPUExecutionProvider": {
+      "kernel_events_per_run": 36.0,
+      "kernel_ms_per_run": 3.1044
+     },
+     "CoreMLExecutionProvider": {
+      "kernel_events_per_run": 13.0,
+      "kernel_ms_per_run": 262.41790000000003
+     }
+    }
+   },
+   "session_create_cold_ms": 44026.1,
+   "coverage_label": "partial CoreML (481 of 517 nodes, 13 partitions)",
+   "session_create_warm_ms": 10925.3,
+   "latency": {
+    "runs": 200,
+    "warmup": 10,
+    "run_p50_ms": 267.991,
+    "run_p95_ms": 275.833,
+    "run_min_ms": 258.887,
+    "run_max_ms": 290.94,
+    "preprocess_p50_ms": 1.673,
+    "total_p50_ms": 270.255,
+    "total_p95_ms": 278.11
+   },
+   "peak_resident_mib": 904.2,
+   "parity_vs_cpu": {
+    "fixtures": {
+     "count": 22,
+     "worst": {
+      "max_abs": 0.00011491775512695312,
+      "rel_max": 2.3332503733200598e-05,
+      "mean_abs_over_range": 1.8926694398695717e-06
+     },
+     "mean": {
+      "rel_max": 7.505677880439456e-06,
+      "mean_abs_over_range": 5.432509193169097e-07,
+      "edge_mean_abs_over_range": 6.654585304943601e-07,
+      "non_edge_mean_abs_over_range": 5.29671844818105e-07,
+      "subject_mean_abs_over_range": 5.595189334541467e-07
+     },
+     "min_pearson": 0.9999999999852228,
+     "within_working_tolerances": 22
+    },
+    "local_stills": {
+     "count": 12,
+     "worst": {
+      "max_abs": 0.0001004934310913086,
+      "rel_max": 2.2579392982616614e-05,
+      "mean_abs_over_range": 9.758622803046994e-07
+     },
+     "mean": {
+      "rel_max": 1.621835535514142e-05,
+      "mean_abs_over_range": 3.1411886245964075e-07,
+      "edge_mean_abs_over_range": 3.9745821503357464e-07,
+      "non_edge_mean_abs_over_range": 3.04858626813267e-07,
+      "subject_mean_abs_over_range": 3.5434242437348683e-07
+     },
+     "min_pearson": 0.9999999999939994,
+     "within_working_tolerances": 12
+    },
+    "local_bursts": {
+     "count": 40,
+     "worst": {
+      "max_abs": 0.00012636184692382812,
+      "rel_max": 2.7412437590902598e-05,
+      "mean_abs_over_range": 6.678916570387241e-07
+     },
+     "mean": {
+      "rel_max": 1.777765060055603e-05,
+      "mean_abs_over_range": 3.119231980236552e-07,
+      "edge_mean_abs_over_range": 3.5194050386777105e-07,
+      "non_edge_mean_abs_over_range": 3.0747668301478505e-07,
+      "subject_mean_abs_over_range": 2.980854648791271e-07
+     },
+     "min_pearson": 0.9999999999982325,
+     "within_working_tolerances": 40
+    }
+   },
+   "parity_rows_local": [
+    {
+     "name": "still_01",
+     "rel_max": 2.2579392982616614e-05,
+     "mean_abs_over_range": 2.387693116322422e-07,
+     "edge_mean_abs_over_range": 2.763979585339307e-07,
+     "subject_mean_abs_over_range": 1.7155769403536546e-07,
+     "pearson": 0.9999999999994684
+    },
+    {
+     "name": "still_02",
+     "rel_max": 1.84521227175196e-05,
+     "mean_abs_over_range": 2.873828208013674e-07,
+     "edge_mean_abs_over_range": 3.241851789655637e-07,
+     "subject_mean_abs_over_range": 1.8330460819972798e-07,
+     "pearson": 0.999999999999488
+    },
+    {
+     "name": "still_03",
+     "rel_max": 1.981115752493502e-05,
+     "mean_abs_over_range": 2.2757358291994993e-07,
+     "edge_mean_abs_over_range": 2.7081044538410673e-07,
+     "subject_mean_abs_over_range": 1.7696656377748715e-07,
+     "pearson": 0.9999999999994729
+    },
+    {
+     "name": "still_04",
+     "rel_max": 1.4731935203319677e-05,
+     "mean_abs_over_range": 2.092589537086413e-07,
+     "edge_mean_abs_over_range": 2.6543037548140355e-07,
+     "subject_mean_abs_over_range": 2.946387040663935e-07,
+     "pearson": 0.9999999999995953
+    },
+    {
+     "name": "still_05",
+     "rel_max": 1.896718295660005e-05,
+     "mean_abs_over_range": 2.3771526745022485e-07,
+     "edge_mean_abs_over_range": 4.5402738791510453e-07,
+     "subject_mean_abs_over_range": 3.379135531226358e-07,
+     "pearson": 0.9999999999986511
+    },
+    {
+     "name": "still_06",
+     "rel_max": 1.2808740959654429e-05,
+     "mean_abs_over_range": 1.6160099263782377e-07,
+     "edge_mean_abs_over_range": 3.262533463111167e-07,
+     "subject_mean_abs_over_range": 2.0986446083067683e-07,
+     "pearson": 0.9999999999993199
+    },
+    {
+     "name": "still_07",
+     "rel_max": 2.027992329534586e-05,
+     "mean_abs_over_range": 1.9377960754350047e-07,
+     "edge_mean_abs_over_range": 2.7206268823141154e-07,
+     "subject_mean_abs_over_range": 1.7228489014589397e-07,
+     "pearson": 0.9999999999994986
+    },
+    {
+     "name": "still_08",
+     "rel_max": 1.7804968814158083e-05,
+     "mean_abs_over_range": 1.5913792910302008e-07,
+     "edge_mean_abs_over_range": 2.908753499127891e-07,
+     "subject_mean_abs_over_range": 2.53833940010404e-07,
+     "pearson": 0.9999999999995192
+    },
+    {
+     "name": "still_09",
+     "rel_max": 1.5871395206858688e-05,
+     "mean_abs_over_range": 5.808842458938093e-07,
+     "edge_mean_abs_over_range": 5.331961132686253e-07,
+     "subject_mean_abs_over_range": 8.0115640864841e-07,
+     "pearson": 0.9999999999979623
+    },
+    {
+     "name": "still_10",
+     "rel_max": 8.170929655692507e-06,
+     "mean_abs_over_range": 9.758622803046994e-07,
+     "edge_mean_abs_over_range": 9.635958579874751e-07,
+     "subject_mean_abs_over_range": 8.881741157170674e-07,
+     "pearson": 0.9999999999939994
+    },
+    {
+     "name": "still_11",
+     "rel_max": 1.575235907807546e-05,
+     "mean_abs_over_range": 2.9694021770331195e-07,
+     "edge_mean_abs_over_range": 4.964915404264626e-07,
+     "subject_mean_abs_over_range": 4.099992898168117e-07,
+     "pearson": 0.9999999999993165
+    },
+    {
+     "name": "still_12",
+     "rel_max": 9.390155866921054e-06,
+     "mean_abs_over_range": 2.0052113981709806e-07,
+     "edge_mean_abs_over_range": 2.9617233798490497e-07,
+     "subject_mean_abs_over_range": 3.52414864110969e-07,
+     "pearson": 0.9999999999994702
+    }
+   ],
+   "temporal": {
+    "burst_a": {
+     "cpu_flicker": 0.002922930316587084,
+     "flicker": 0.002922937901128156,
+     "ratio_to_cpu": 1.0000025948415632
+    },
+    "burst_b": {
+     "cpu_flicker": 0.00865449274813967,
+     "flicker": 0.008654406556600314,
+     "ratio_to_cpu": 0.9999900408329103
+    }
+   },
+   "fp32_parity": "passes FP32 parity: eligible for default",
+   "fp32_failures": {
+    "count": 0,
+    "first": []
+   }
+  },
+  "CPUAndGPU": {
+   "label": "CoreML CPUAndGPU",
+   "strict_all_nodes_on_coreml": {
+    "session_created": false,
+    "error": "load failed (/Users/prakitkalsi/Developer/Relume/models/depth_anything_v2_small_448.onnx): ONNX Runtime: This session contains graph nodes that are assigned to the default CPU EP, but fallback to CPU EP has been explicitly disabled by the user.",
+    "note": "diagnostic only; not the deployment configuration"
+   },
+   "assignment": {
+    "coreml_partitions": 13,
+    "graph_nodes": 517,
+    "coreml_supported_nodes": 481,
+    "placed": {
+     "CoreMLExecutionProvider": {
+      "nodes": 13,
+      "op_types": {
+       "fused CoreML partition": 13
+      }
+     },
+     "CPUExecutionProvider": {
+      "nodes": 36,
+      "op_types": {
+       "Gather": 36
+      }
+     }
+    }
+   },
+   "compute_plan": {
+    "ops_planned": 481,
+    "devices": {
+     "MLGPUComputeDevice": 481
+    },
+    "by_op": {
+     "MLGPUComputeDevice:ios17.reshape": 125,
+     "MLGPUComputeDevice:ios17.mul": 60,
+     "MLGPUComputeDevice:ios17.transpose": 53,
+     "MLGPUComputeDevice:ios17.linear": 48,
+     "MLGPUComputeDevice:ios17.add": 47,
+     "MLGPUComputeDevice:ios17.conv": 31,
+     "MLGPUComputeDevice:ios17.layer_norm": 28,
+     "MLGPUComputeDevice:ios17.matmul": 24,
+     "MLGPUComputeDevice:ios16.relu": 16,
+     "MLGPUComputeDevice:ios16.softmax": 12,
+     "MLGPUComputeDevice:ios17.real_div": 12,
+     "MLGPUComputeDevice:ios16.erf": 12,
+     "MLGPUComputeDevice:ios17.slice_by_index": 4,
+     "MLGPUComputeDevice:ios16.resize_bilinear": 4,
+     "MLGPUComputeDevice:ios17.conv_transpose": 2,
+     "MLGPUComputeDevice:ios17.concat": 1,
+     "MLGPUComputeDevice:ios16.upsample_bilinear": 1,
+     "MLGPUComputeDevice:ios17.squeeze": 1
+    }
+   },
+   "runtime_profile": {
+    "file": "profile_CPUAndGPU_2026-10-26_03-30-03_269.json",
+    "runs_total": 12,
+    "runs_measured": 10,
+    "model_run_ms_mean": 136.3219,
+    "providers": {
+     "CPUExecutionProvider": {
+      "kernel_events_per_run": 36.0,
+      "kernel_ms_per_run": 2.5524
+     },
+     "CoreMLExecutionProvider": {
+      "kernel_events_per_run": 13.0,
+      "kernel_ms_per_run": 133.6549
+     }
+    }
+   },
+   "session_create_cold_ms": 87139.4,
+   "coverage_label": "partial CoreML (481 of 517 nodes, 13 partitions)",
+   "session_create_warm_ms": 16156.6,
+   "latency": {
+    "runs": 200,
+    "warmup": 10,
+    "run_p50_ms": 121.255,
+    "run_p95_ms": 176.5,
+    "run_min_ms": 95.109,
+    "run_max_ms": 190.818,
+    "preprocess_p50_ms": 1.699,
+    "total_p50_ms": 123.516,
+    "total_p95_ms": 178.673
+   },
+   "peak_resident_mib": 554.6,
+   "parity_vs_cpu": {
+    "fixtures": {
+     "count": 22,
+     "worst": {
+      "max_abs": 0.00012156367301940918,
+      "rel_max": 2.257984232245219e-05,
+      "mean_abs_over_range": 1.6229068193059676e-06
+     },
+     "mean": {
+      "rel_max": 6.927275477595605e-06,
+      "mean_abs_over_range": 3.6239057753603933e-07,
+      "edge_mean_abs_over_range": 4.306907233123811e-07,
+      "non_edge_mean_abs_over_range": 3.548014203727471e-07,
+      "subject_mean_abs_over_range": 4.0560728863243567e-07
+     },
+     "min_pearson": 0.9999999999873067,
+     "within_working_tolerances": 22
+    },
+    "local_stills": {
+     "count": 12,
+     "worst": {
+      "max_abs": 9.298324584960938e-05,
+      "rel_max": 2.0321981739214338e-05,
+      "mean_abs_over_range": 1.0776207140389013e-06
+     },
+     "mean": {
+      "rel_max": 1.631826333811422e-05,
+      "mean_abs_over_range": 2.673749426759528e-07,
+      "edge_mean_abs_over_range": 3.0199977295457505e-07,
+      "non_edge_mean_abs_over_range": 2.6352761152094664e-07,
+      "subject_mean_abs_over_range": 2.236837328613446e-07
+     },
+     "min_pearson": 0.9999999999850215,
+     "within_working_tolerances": 12
+    },
+    "local_bursts": {
+     "count": 40,
+     "worst": {
+      "max_abs": 0.0001270771026611328,
+      "rel_max": 2.7392600912873844e-05,
+      "mean_abs_over_range": 6.572424060583787e-07
+     },
+     "mean": {
+      "rel_max": 1.7459191100095516e-05,
+      "mean_abs_over_range": 2.721042172209295e-07,
+      "edge_mean_abs_over_range": 3.165148537116411e-07,
+      "non_edge_mean_abs_over_range": 2.6716953814786384e-07,
+      "subject_mean_abs_over_range": 2.995858362788417e-07
+     },
+     "min_pearson": 0.999999999998191,
+     "within_working_tolerances": 40
+    }
+   },
+   "parity_rows_local": [
+    {
+     "name": "still_01",
+     "rel_max": 1.9017045098051952e-05,
+     "mean_abs_over_range": 1.895088372297226e-07,
+     "edge_mean_abs_over_range": 3.133566891241767e-07,
+     "subject_mean_abs_over_range": 2.271040762551039e-07,
+     "pearson": 0.9999999999994673
+    },
+    {
+     "name": "still_02",
+     "rel_max": 1.908117235561686e-05,
+     "mean_abs_over_range": 2.3836600446879332e-07,
+     "edge_mean_abs_over_range": 2.6369727620402136e-07,
+     "subject_mean_abs_over_range": 2.1994881402233466e-07,
+     "pearson": 0.9999999999995264
+    },
+    {
+     "name": "still_03",
+     "rel_max": 1.8676143291735616e-05,
+     "mean_abs_over_range": 1.6015905999351573e-07,
+     "edge_mean_abs_over_range": 2.7654641057446386e-07,
+     "subject_mean_abs_over_range": 1.496726811350448e-07,
+     "pearson": 0.9999999999996256
+    },
+    {
+     "name": "still_04",
+     "rel_max": 1.4867922297504165e-05,
+     "mean_abs_over_range": 1.3005964250429476e-07,
+     "edge_mean_abs_over_range": 2.6257811432913376e-07,
+     "subject_mean_abs_over_range": 1.7557049739709816e-07,
+     "pearson": 0.9999999999997315
+    },
+    {
+     "name": "still_05",
+     "rel_max": 2.0321981739214338e-05,
+     "mean_abs_over_range": 1.457539537090414e-07,
+     "edge_mean_abs_over_range": 3.6947334797574877e-07,
+     "subject_mean_abs_over_range": 2.0492253772731313e-07,
+     "pearson": 0.9999999999991591
+    },
+    {
+     "name": "still_06",
+     "rel_max": 1.4771766394084227e-05,
+     "mean_abs_over_range": 1.5711727278229731e-07,
+     "edge_mean_abs_over_range": 2.2799335352538093e-07,
+     "subject_mean_abs_over_range": 1.9126352726084964e-07,
+     "pearson": 0.9999999999996121
+    },
+    {
+     "name": "still_07",
+     "rel_max": 1.8873371238291603e-05,
+     "mean_abs_over_range": 2.6794830973834297e-07,
+     "edge_mean_abs_over_range": 2.263728348109706e-07,
+     "subject_mean_abs_over_range": 1.1262793529095206e-07,
+     "pearson": 0.9999999999995198
+    },
+    {
+     "name": "still_08",
+     "rel_max": 1.6553056944412594e-05,
+     "mean_abs_over_range": 1.4277263914045537e-07,
+     "edge_mean_abs_over_range": 2.2092813806414147e-07,
+     "subject_mean_abs_over_range": 2.0352928908290198e-07,
+     "pearson": 0.9999999999995273
+    },
+    {
+     "name": "still_09",
+     "rel_max": 1.3573516439535712e-05,
+     "mean_abs_over_range": 3.855502878971509e-07,
+     "edge_mean_abs_over_range": 3.8012964358054604e-07,
+     "subject_mean_abs_over_range": 3.972249513565505e-07,
+     "pearson": 0.9999999999996152
+    },
+    {
+     "name": "still_10",
+     "rel_max": 1.0880237909948443e-05,
+     "mean_abs_over_range": 1.0776207140389013e-06,
+     "edge_mean_abs_over_range": 5.588257751719485e-07,
+     "subject_mean_abs_over_range": 3.630200577532542e-07,
+     "pearson": 0.9999999999850215
+    },
+    {
+     "name": "still_11",
+     "rel_max": 1.643724425538309e-05,
+     "mean_abs_over_range": 1.0991759729219438e-07,
+     "edge_mean_abs_over_range": 2.3882220015003e-07,
+     "subject_mean_abs_over_range": 1.2142330214419725e-07,
+     "pearson": 0.999999999999624
+    },
+    {
+     "name": "still_12",
+     "rel_max": 1.276570209359202e-05,
+     "mean_abs_over_range": 2.0372499331672378e-07,
+     "edge_mean_abs_over_range": 2.852734919443381e-07,
+     "subject_mean_abs_over_range": 3.178971249105347e-07,
+     "pearson": 0.9999999999994839
+    }
+   ],
+   "temporal": {
+    "burst_a": {
+     "cpu_flicker": 0.002922930316587084,
+     "flicker": 0.002922852639935852,
+     "ratio_to_cpu": 0.9999734250759276
+    },
+    "burst_b": {
+     "cpu_flicker": 0.00865449274813967,
+     "flicker": 0.008654583642335567,
+     "ratio_to_cpu": 1.0000105025445791
+    }
+   },
+   "fp32_parity": "passes FP32 parity: eligible for default",
+   "fp32_failures": {
+    "count": 0,
+    "first": []
+   }
+  },
+  "CPUAndNeuralEngine": {
+   "label": "CoreML CPUAndNeuralEngine",
+   "strict_all_nodes_on_coreml": {
+    "session_created": false,
+    "error": "load failed (/Users/prakitkalsi/Developer/Relume/models/depth_anything_v2_small_448.onnx): ONNX Runtime: This session contains graph nodes that are assigned to the default CPU EP, but fallback to CPU EP has been explicitly disabled by the user.",
+    "note": "diagnostic only; not the deployment configuration"
+   },
+   "assignment": {
+    "coreml_partitions": 13,
+    "graph_nodes": 517,
+    "coreml_supported_nodes": 481,
+    "placed": {
+     "CoreMLExecutionProvider": {
+      "nodes": 13,
+      "op_types": {
+       "fused CoreML partition": 13
+      }
+     },
+     "CPUExecutionProvider": {
+      "nodes": 36,
+      "op_types": {
+       "Gather": 36
+      }
+     }
+    }
+   },
+   "compute_plan": {
+    "ops_planned": 481,
+    "devices": {
+     "MLCPUComputeDevice": 481
+    },
+    "by_op": {
+     "MLCPUComputeDevice:ios17.reshape": 125,
+     "MLCPUComputeDevice:ios17.mul": 60,
+     "MLCPUComputeDevice:ios17.transpose": 53,
+     "MLCPUComputeDevice:ios17.linear": 48,
+     "MLCPUComputeDevice:ios17.add": 47,
+     "MLCPUComputeDevice:ios17.conv": 31,
+     "MLCPUComputeDevice:ios17.layer_norm": 28,
+     "MLCPUComputeDevice:ios17.matmul": 24,
+     "MLCPUComputeDevice:ios16.relu": 16,
+     "MLCPUComputeDevice:ios16.softmax": 12,
+     "MLCPUComputeDevice:ios17.real_div": 12,
+     "MLCPUComputeDevice:ios16.erf": 12,
+     "MLCPUComputeDevice:ios17.slice_by_index": 4,
+     "MLCPUComputeDevice:ios16.resize_bilinear": 4,
+     "MLCPUComputeDevice:ios17.conv_transpose": 2,
+     "MLCPUComputeDevice:ios17.concat": 1,
+     "MLCPUComputeDevice:ios16.upsample_bilinear": 1,
+     "MLCPUComputeDevice:ios17.squeeze": 1
+    }
+   },
+   "runtime_profile": {
+    "file": "profile_CPUAndNeuralEngine_2026-10-26_03-33-19_412.json",
+    "runs_total": 12,
+    "runs_measured": 10,
+    "model_run_ms_mean": 520.4162,
+    "providers": {
+     "CPUExecutionProvider": {
+      "kernel_events_per_run": 36.0,
+      "kernel_ms_per_run": 2.93
+     },
+     "CoreMLExecutionProvider": {
+      "kernel_events_per_run": 13.0,
+      "kernel_ms_per_run": 517.3491
+     }
+    }
+   },
+   "session_create_cold_ms": 63503.8,
+   "coverage_label": "partial CoreML (481 of 517 nodes, 13 partitions)",
+   "session_create_warm_ms": 10828.8,
+   "latency": {
+    "runs": 200,
+    "warmup": 10,
+    "run_p50_ms": 517.767,
+    "run_p95_ms": 525.377,
+    "run_min_ms": 507.949,
+    "run_max_ms": 536.95,
+    "preprocess_p50_ms": 1.641,
+    "total_p50_ms": 519.975,
+    "total_p95_ms": 527.547
+   },
+   "peak_resident_mib": 1843.3,
+   "parity_vs_cpu": {
+    "fixtures": {
+     "count": 22,
+     "worst": {
+      "max_abs": 0.00013053417205810547,
+      "rel_max": 2.3293905712136575e-05,
+      "mean_abs_over_range": 1.3196234066797565e-06
+     },
+     "mean": {
+      "rel_max": 7.868514049512013e-06,
+      "mean_abs_over_range": 4.384942148863096e-07,
+      "edge_mean_abs_over_range": 5.368584777321119e-07,
+      "non_edge_mean_abs_over_range": 4.2756448931247694e-07,
+      "subject_mean_abs_over_range": 4.797536656802533e-07
+     },
+     "min_pearson": 0.9999999999810768,
+     "within_working_tolerances": 22
+    },
+    "local_stills": {
+     "count": 12,
+     "worst": {
+      "max_abs": 0.00010561943054199219,
+      "rel_max": 2.2658274955455775e-05,
+      "mean_abs_over_range": 1.0791304621034512e-06
+     },
+     "mean": {
+      "rel_max": 1.615947525039753e-05,
+      "mean_abs_over_range": 3.607528188001003e-07,
+      "edge_mean_abs_over_range": 4.600228585944036e-07,
+      "non_edge_mean_abs_over_range": 3.497224480001276e-07,
+      "subject_mean_abs_over_range": 4.624343076734929e-07
+     },
+     "min_pearson": 0.9999999999926926,
+     "within_working_tolerances": 12
+    },
+    "local_bursts": {
+     "count": 40,
+     "worst": {
+      "max_abs": 0.00013256072998046875,
+      "rel_max": 2.8574645605174214e-05,
+      "mean_abs_over_range": 7.172847780209239e-07
+     },
+     "mean": {
+      "rel_max": 1.7653679202285216e-05,
+      "mean_abs_over_range": 3.3228820862511183e-07,
+      "edge_mean_abs_over_range": 3.792269131845871e-07,
+      "non_edge_mean_abs_over_range": 3.270726237695581e-07,
+      "subject_mean_abs_over_range": 3.339030411998806e-07
+     },
+     "min_pearson": 0.9999999999962486,
+     "within_working_tolerances": 40
+    }
+   },
+   "parity_rows_local": [
+    {
+     "name": "still_01",
+     "rel_max": 1.834743083403604e-05,
+     "mean_abs_over_range": 2.24758120928782e-07,
+     "edge_mean_abs_over_range": 2.841370059567681e-07,
+     "subject_mean_abs_over_range": 2.3693903575783765e-07,
+     "pearson": 0.9999999999994461
+    },
+    {
+     "name": "still_02",
+     "rel_max": 1.8609385127043914e-05,
+     "mean_abs_over_range": 2.584729861161741e-07,
+     "edge_mean_abs_over_range": 3.870981902866135e-07,
+     "subject_mean_abs_over_range": 2.6838289476178e-07,
+     "pearson": 0.9999999999994778
+    },
+    {
+     "name": "still_03",
+     "rel_max": 1.8572960179626578e-05,
+     "mean_abs_over_range": 2.2292051477666807e-07,
+     "edge_mean_abs_over_range": 3.2946504315976144e-07,
+     "subject_mean_abs_over_range": 1.7892119443875227e-07,
+     "pearson": 0.9999999999994015
+    },
+    {
+     "name": "still_04",
+     "rel_max": 1.5615851315518858e-05,
+     "mean_abs_over_range": 2.188449027971547e-07,
+     "edge_mean_abs_over_range": 3.801768261104843e-07,
+     "subject_mean_abs_over_range": 2.5550519438126046e-07,
+     "pearson": 0.9999999999994724
+    },
+    {
+     "name": "still_05",
+     "rel_max": 1.719552301010444e-05,
+     "mean_abs_over_range": 2.0168857569465595e-07,
+     "edge_mean_abs_over_range": 4.384935538607575e-07,
+     "subject_mean_abs_over_range": 1.8928380539789073e-07,
+     "pearson": 0.9999999999988162
+    },
+    {
+     "name": "still_06",
+     "rel_max": 1.3544875497565603e-05,
+     "mean_abs_over_range": 2.0589856308799107e-07,
+     "edge_mean_abs_over_range": 3.58877583511825e-07,
+     "subject_mean_abs_over_range": 1.9887877958889016e-07,
+     "pearson": 0.9999999999992052
+    },
+    {
+     "name": "still_07",
+     "rel_max": 2.2658274955455775e-05,
+     "mean_abs_over_range": 1.749058848115772e-07,
+     "edge_mean_abs_over_range": 3.086914630650032e-07,
+     "subject_mean_abs_over_range": 2.3566250464851101e-07,
+     "pearson": 0.9999999999994975
+    },
+    {
+     "name": "still_08",
+     "rel_max": 1.7573133282723734e-05,
+     "mean_abs_over_range": 1.895967220405447e-07,
+     "edge_mean_abs_over_range": 3.353229345809967e-07,
+     "subject_mean_abs_over_range": 2.877484805134587e-07,
+     "pearson": 0.9999999999992648
+    },
+    {
+     "name": "still_09",
+     "rel_max": 1.67130601041921e-05,
+     "mean_abs_over_range": 5.375977046779993e-07,
+     "edge_mean_abs_over_range": 5.431287365941005e-07,
+     "subject_mean_abs_over_range": 9.547893916848074e-07,
+     "pearson": 0.9999999999979949
+    },
+    {
+     "name": "still_10",
+     "rel_max": 9.547086229282822e-06,
+     "mean_abs_over_range": 1.0791304621034512e-06,
+     "edge_mean_abs_over_range": 9.069616429615371e-07,
+     "subject_mean_abs_over_range": 9.916289268891123e-07,
+     "pearson": 0.9999999999926926
+    },
+    {
+     "name": "still_11",
+     "rel_max": 1.577772519575352e-05,
+     "mean_abs_over_range": 4.5755340244508074e-07,
+     "edge_mean_abs_over_range": 6.282794601202464e-07,
+     "subject_mean_abs_over_range": 5.008382610600345e-07,
+     "pearson": 0.9999999999992272
+    },
+    {
+     "name": "still_12",
+     "rel_max": 9.758397273466977e-06,
+     "mean_abs_over_range": 5.576659861211245e-07,
+     "edge_mean_abs_over_range": 6.196418629247487e-07,
+     "subject_mean_abs_over_range": 1.2506332229595788e-06,
+     "pearson": 0.9999999999973821
+    }
+   ],
+   "temporal": {
+    "burst_a": {
+     "cpu_flicker": 0.002922930316587084,
+     "flicker": 0.002922953194871134,
+     "ratio_to_cpu": 1.0000078271739563
+    },
+    "burst_b": {
+     "cpu_flicker": 0.00865449274813967,
+     "flicker": 0.008654502302313289,
+     "ratio_to_cpu": 1.0000011039553556
+    }
+   },
+   "fp32_parity": "passes FP32 parity: eligible for default",
+   "fp32_failures": {
+    "count": 0,
+    "first": []
+   }
+  },
+  "ALL": {
+   "label": "CoreML ALL",
+   "strict_all_nodes_on_coreml": {
+    "session_created": false,
+    "error": "load failed (/Users/prakitkalsi/Developer/Relume/models/depth_anything_v2_small_448.onnx): ONNX Runtime: This session contains graph nodes that are assigned to the default CPU EP, but fallback to CPU EP has been explicitly disabled by the user.",
+    "note": "diagnostic only; not the deployment configuration"
+   },
+   "assignment": {
+    "coreml_partitions": 13,
+    "graph_nodes": 517,
+    "coreml_supported_nodes": 481,
+    "placed": {
+     "CoreMLExecutionProvider": {
+      "nodes": 13,
+      "op_types": {
+       "fused CoreML partition": 13
+      }
+     },
+     "CPUExecutionProvider": {
+      "nodes": 36,
+      "op_types": {
+       "Gather": 36
+      }
+     }
+    }
+   },
+   "compute_plan": {
+    "ops_planned": 481,
+    "devices": {
+     "MLGPUComputeDevice": 481
+    },
+    "by_op": {
+     "MLGPUComputeDevice:ios17.reshape": 125,
+     "MLGPUComputeDevice:ios17.mul": 60,
+     "MLGPUComputeDevice:ios17.transpose": 53,
+     "MLGPUComputeDevice:ios17.linear": 48,
+     "MLGPUComputeDevice:ios17.add": 47,
+     "MLGPUComputeDevice:ios17.conv": 31,
+     "MLGPUComputeDevice:ios17.layer_norm": 28,
+     "MLGPUComputeDevice:ios17.matmul": 24,
+     "MLGPUComputeDevice:ios16.relu": 16,
+     "MLGPUComputeDevice:ios16.softmax": 12,
+     "MLGPUComputeDevice:ios17.real_div": 12,
+     "MLGPUComputeDevice:ios16.erf": 12,
+     "MLGPUComputeDevice:ios17.slice_by_index": 4,
+     "MLGPUComputeDevice:ios16.resize_bilinear": 4,
+     "MLGPUComputeDevice:ios17.conv_transpose": 2,
+     "MLGPUComputeDevice:ios17.concat": 1,
+     "MLGPUComputeDevice:ios16.upsample_bilinear": 1,
+     "MLGPUComputeDevice:ios17.squeeze": 1
+    }
+   },
+   "runtime_profile": {
+    "file": "profile_ALL_2026-10-26_03-38-16_760.json",
+    "runs_total": 12,
+    "runs_measured": 10,
+    "model_run_ms_mean": 137.07840000000002,
+    "providers": {
+     "CPUExecutionProvider": {
+      "kernel_events_per_run": 36.0,
+      "kernel_ms_per_run": 2.5496
+     },
+     "CoreMLExecutionProvider": {
+      "kernel_events_per_run": 13.0,
+      "kernel_ms_per_run": 134.4023
+     }
+    }
+   },
+   "session_create_cold_ms": 107139.8,
+   "coverage_label": "partial CoreML (481 of 517 nodes, 13 partitions)",
+   "session_create_warm_ms": 15990.6,
+   "latency": {
+    "runs": 200,
+    "warmup": 10,
+    "run_p50_ms": 122.396,
+    "run_p95_ms": 187.029,
+    "run_min_ms": 98.714,
+    "run_max_ms": 190.611,
+    "preprocess_p50_ms": 1.692,
+    "total_p50_ms": 124.66,
+    "total_p95_ms": 189.466
+   },
+   "peak_resident_mib": 627.9,
+   "parity_vs_cpu": {
+    "fixtures": {
+     "count": 22,
+     "worst": {
+      "max_abs": 0.00012156367301940918,
+      "rel_max": 2.257984232245219e-05,
+      "mean_abs_over_range": 1.6229068193059676e-06
+     },
+     "mean": {
+      "rel_max": 6.927275477595605e-06,
+      "mean_abs_over_range": 3.6239057753603933e-07,
+      "edge_mean_abs_over_range": 4.306907233123811e-07,
+      "non_edge_mean_abs_over_range": 3.548014203727471e-07,
+      "subject_mean_abs_over_range": 4.0560728863243567e-07
+     },
+     "min_pearson": 0.9999999999873067,
+     "within_working_tolerances": 22
+    },
+    "local_stills": {
+     "count": 12,
+     "worst": {
+      "max_abs": 9.298324584960938e-05,
+      "rel_max": 2.0321981739214338e-05,
+      "mean_abs_over_range": 1.0776207140389013e-06
+     },
+     "mean": {
+      "rel_max": 1.631826333811422e-05,
+      "mean_abs_over_range": 2.673749426759528e-07,
+      "edge_mean_abs_over_range": 3.0199977295457505e-07,
+      "non_edge_mean_abs_over_range": 2.6352761152094664e-07,
+      "subject_mean_abs_over_range": 2.236837328613446e-07
+     },
+     "min_pearson": 0.9999999999850215,
+     "within_working_tolerances": 12
+    },
+    "local_bursts": {
+     "count": 40,
+     "worst": {
+      "max_abs": 0.0001270771026611328,
+      "rel_max": 2.7392600912873844e-05,
+      "mean_abs_over_range": 6.572424060583787e-07
+     },
+     "mean": {
+      "rel_max": 1.7459191100095516e-05,
+      "mean_abs_over_range": 2.721042172209295e-07,
+      "edge_mean_abs_over_range": 3.165148537116411e-07,
+      "non_edge_mean_abs_over_range": 2.6716953814786384e-07,
+      "subject_mean_abs_over_range": 2.995858362788417e-07
+     },
+     "min_pearson": 0.999999999998191,
+     "within_working_tolerances": 40
+    }
+   },
+   "parity_rows_local": [
+    {
+     "name": "still_01",
+     "rel_max": 1.9017045098051952e-05,
+     "mean_abs_over_range": 1.895088372297226e-07,
+     "edge_mean_abs_over_range": 3.133566891241767e-07,
+     "subject_mean_abs_over_range": 2.271040762551039e-07,
+     "pearson": 0.9999999999994673
+    },
+    {
+     "name": "still_02",
+     "rel_max": 1.908117235561686e-05,
+     "mean_abs_over_range": 2.3836600446879332e-07,
+     "edge_mean_abs_over_range": 2.6369727620402136e-07,
+     "subject_mean_abs_over_range": 2.1994881402233466e-07,
+     "pearson": 0.9999999999995264
+    },
+    {
+     "name": "still_03",
+     "rel_max": 1.8676143291735616e-05,
+     "mean_abs_over_range": 1.6015905999351573e-07,
+     "edge_mean_abs_over_range": 2.7654641057446386e-07,
+     "subject_mean_abs_over_range": 1.496726811350448e-07,
+     "pearson": 0.9999999999996256
+    },
+    {
+     "name": "still_04",
+     "rel_max": 1.4867922297504165e-05,
+     "mean_abs_over_range": 1.3005964250429476e-07,
+     "edge_mean_abs_over_range": 2.6257811432913376e-07,
+     "subject_mean_abs_over_range": 1.7557049739709816e-07,
+     "pearson": 0.9999999999997315
+    },
+    {
+     "name": "still_05",
+     "rel_max": 2.0321981739214338e-05,
+     "mean_abs_over_range": 1.457539537090414e-07,
+     "edge_mean_abs_over_range": 3.6947334797574877e-07,
+     "subject_mean_abs_over_range": 2.0492253772731313e-07,
+     "pearson": 0.9999999999991591
+    },
+    {
+     "name": "still_06",
+     "rel_max": 1.4771766394084227e-05,
+     "mean_abs_over_range": 1.5711727278229731e-07,
+     "edge_mean_abs_over_range": 2.2799335352538093e-07,
+     "subject_mean_abs_over_range": 1.9126352726084964e-07,
+     "pearson": 0.9999999999996121
+    },
+    {
+     "name": "still_07",
+     "rel_max": 1.8873371238291603e-05,
+     "mean_abs_over_range": 2.6794830973834297e-07,
+     "edge_mean_abs_over_range": 2.263728348109706e-07,
+     "subject_mean_abs_over_range": 1.1262793529095206e-07,
+     "pearson": 0.9999999999995198
+    },
+    {
+     "name": "still_08",
+     "rel_max": 1.6553056944412594e-05,
+     "mean_abs_over_range": 1.4277263914045537e-07,
+     "edge_mean_abs_over_range": 2.2092813806414147e-07,
+     "subject_mean_abs_over_range": 2.0352928908290198e-07,
+     "pearson": 0.9999999999995273
+    },
+    {
+     "name": "still_09",
+     "rel_max": 1.3573516439535712e-05,
+     "mean_abs_over_range": 3.855502878971509e-07,
+     "edge_mean_abs_over_range": 3.8012964358054604e-07,
+     "subject_mean_abs_over_range": 3.972249513565505e-07,
+     "pearson": 0.9999999999996152
+    },
+    {
+     "name": "still_10",
+     "rel_max": 1.0880237909948443e-05,
+     "mean_abs_over_range": 1.0776207140389013e-06,
+     "edge_mean_abs_over_range": 5.588257751719485e-07,
+     "subject_mean_abs_over_range": 3.630200577532542e-07,
+     "pearson": 0.9999999999850215
+    },
+    {
+     "name": "still_11",
+     "rel_max": 1.643724425538309e-05,
+     "mean_abs_over_range": 1.0991759729219438e-07,
+     "edge_mean_abs_over_range": 2.3882220015003e-07,
+     "subject_mean_abs_over_range": 1.2142330214419725e-07,
+     "pearson": 0.999999999999624
+    },
+    {
+     "name": "still_12",
+     "rel_max": 1.276570209359202e-05,
+     "mean_abs_over_range": 2.0372499331672378e-07,
+     "edge_mean_abs_over_range": 2.852734919443381e-07,
+     "subject_mean_abs_over_range": 3.178971249105347e-07,
+     "pearson": 0.9999999999994839
+    }
+   ],
+   "temporal": {
+    "burst_a": {
+     "cpu_flicker": 0.002922930316587084,
+     "flicker": 0.002922852639935852,
+     "ratio_to_cpu": 0.9999734250759276
+    },
+    "burst_b": {
+     "cpu_flicker": 0.00865449274813967,
+     "flicker": 0.008654583642335567,
+     "ratio_to_cpu": 1.0000105025445791
+    }
+   },
+   "fp32_parity": "passes FP32 parity: eligible for default",
+   "fp32_failures": {
+    "count": 0,
+    "first": []
+   }
+  }
+ },
+ "environment": {
+  "os": "macOS-14.8.9-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "threads": 4
+ },
+ "live_app_file_source": {
+  "description": "Relume.app (Release), file source 1280x720 NV12 at 30 fps, windows open, 10 s stats intervals after the session was Ready (first interval skipped). Synthetic pattern, not a camera; camera runs are Step 8.",
+  "configs": {
+   "coreml_ALL": {
+    "intervals": 14,
+    "composed_fps_mean": 30.0,
+    "loop_p95_ms_max": 18.3,
+    "loop_max_ms": 19.0,
+    "pool_drops": 0,
+    "memory_mib_max": 562.8,
+    "depth_results_per_s": 6.79,
+    "run_p50_ms_median": 138.0,
+    "run_p95_ms_max": 189.0,
+    "age_p50_ms_median": 168.5,
+    "age_p95_ms_max": 232.0,
+    "lag_p50_frames_median": 4.5,
+    "label": "Ready (CoreML (ALL), CPU EP for unsupported nodes, 4 threads)"
+   },
+   "coreml_CPUAndGPU": {
+    "intervals": 15,
+    "composed_fps_mean": 30.01,
+    "loop_p95_ms_max": 17.5,
+    "loop_max_ms": 27.9,
+    "pool_drops": 0,
+    "memory_mib_max": 550.5,
+    "depth_results_per_s": 7.01,
+    "run_p50_ms_median": 129.0,
+    "run_p95_ms_max": 181.0,
+    "age_p50_ms_median": 167.0,
+    "age_p95_ms_max": 233.0,
+    "lag_p50_frames_median": 4.0,
+    "label": "Ready (CoreML (CPUAndGPU), CPU EP for unsupported nodes, 4 threads)"
+   },
+   "coreml_CPUAndNeuralEngine": {
+    "intervals": 16,
+    "composed_fps_mean": 30.0,
+    "loop_p95_ms_max": 16.95,
+    "loop_max_ms": 18.3,
+    "pool_drops": 0,
+    "memory_mib_max": 1427.5,
+    "depth_results_per_s": 1.67,
+    "run_p50_ms_median": 593.0,
+    "run_p95_ms_max": 730.0,
+    "age_p50_ms_median": 626.0,
+    "age_p95_ms_max": 752.0,
+    "lag_p50_frames_median": 18.0,
+    "label": "Ready (CoreML (CPUAndNeuralEngine), CPU EP for unsupported nodes, 4 threads)"
+   },
+   "coreml_CPUOnly": {
+    "intervals": 17,
+    "composed_fps_mean": 29.99,
+    "loop_p95_ms_max": 17.7,
+    "loop_max_ms": 33.3,
+    "pool_drops": 0,
+    "memory_mib_max": 366.9,
+    "depth_results_per_s": 3.49,
+    "run_p50_ms_median": 280.0,
+    "run_p95_ms_max": 302.0,
+    "age_p50_ms_median": 318.0,
+    "age_p95_ms_max": 349.0,
+    "lag_p50_frames_median": 9.0,
+    "label": "Ready (CoreML (CPUOnly), CPU EP for unsupported nodes, 4 threads)"
+   },
+   "cpu_ALL": {
+    "intervals": 6,
+    "composed_fps_mean": 30.0,
+    "loop_p95_ms_max": 16.9,
+    "loop_max_ms": 29.2,
+    "pool_drops": 0,
+    "memory_mib_max": 336.9,
+    "depth_results_per_s": 2.88,
+    "run_p50_ms_median": 340.0,
+    "run_p95_ms_max": 357.0,
+    "age_p50_ms_median": 375.0,
+    "age_p95_ms_max": 395.0,
+    "lag_p50_frames_median": 11.0,
+    "label": "Ready (CPU, 4 threads)"
+   }
+  }
+ }
+}

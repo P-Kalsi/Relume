@@ -3,24 +3,29 @@
 //
 //   relume_depth run        --image in.ppm --out-depth d.npy [--out-tensor t.npy] [--method stretch|letterbox]
 //   relume_depth run-tensor --tensor t.npy --out-depth d.npy
+//   relume_depth run-tensors --list jobs.txt   (one "<in.npy> <out.npy>" per line, one session)
 //   relume_depth bench      [--image in.ppm] [--method m] [--warmup 5] [--runs 50]
 //
 // Common options: --model <onnx> --provider cpu|coreml --units ALL|CPUOnly|CPUAndGPU|CPUAndNeuralEngine
 //   --strict (CoreML diagnostic: no CPU fallback) --threads N --profile <prefix> --cache <dir>
 //   --compute-plan (log CoreML's planned device per op) --verbose (ONNX Runtime verbose log)
 //
-// `run` prints one JSON line with the transform and timings. Depth and tensor
-// files are float32 .npy (C order).
+// `run` prints one JSON line with the transform and timings; `bench` ends with
+// a "BENCH_JSON {...}" line (session creation, per-stage p50/p95, peak
+// resident memory). Depth and tensor files are float32 .npy (C order).
 
 #include "relume/depth_estimator.hpp"
 #include "relume/image_io.hpp"
 #include "relume/preprocess.hpp"
+
+#include <sys/resource.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <fstream>
 #include <map>
 #include <optional>
@@ -129,6 +134,7 @@ int Usage() {
   std::fprintf(stderr,
                "usage: relume_depth run --image in.ppm --out-depth d.npy [--out-tensor t.npy] [--method m]\n"
                "       relume_depth run-tensor --tensor t.npy --out-depth d.npy\n"
+               "       relume_depth run-tensors --list jobs.txt\n"
                "       relume_depth bench [--image in.ppm] [--method m] [--warmup N] [--runs N]\n"
                "options: --model path --provider cpu|coreml --units ALL|CPUOnly|CPUAndGPU|CPUAndNeuralEngine\n"
                "         --strict --threads N --profile prefix --cache dir --compute-plan --verbose\n");
@@ -274,6 +280,50 @@ int RunTensor(const Args& args, relume::IDepthEstimator& estimator) {
   return 0;
 }
 
+// Peak resident memory of this process, in MiB (ru_maxrss is in bytes on macOS).
+double PeakResidentMiB() {
+  rusage usage{};
+  getrusage(RUSAGE_SELF, &usage);
+#if defined(__APPLE__)
+  return static_cast<double>(usage.ru_maxrss) / (1024.0 * 1024.0);
+#else
+  return static_cast<double>(usage.ru_maxrss) / 1024.0;
+#endif
+}
+
+int RunTensors(const Args& args, relume::IDepthEstimator& estimator) {
+  if (!args.Has("--list")) {
+    return Usage();
+  }
+  std::ifstream list(args.Get("--list"));
+  if (!list) {
+    std::fprintf(stderr, "cannot read %s\n", args.Get("--list").c_str());
+    return 1;
+  }
+  std::vector<float> tensor;
+  std::vector<double> run_ms;
+  std::string in, out, error;
+  while (list >> in >> out) {
+    if (!ReadNpyFloats(in, tensor, kNetTensorFloats, error)) {
+      std::fprintf(stderr, "%s\n", error.c_str());
+      return 1;
+    }
+    std::copy(tensor.begin(), tensor.end(), estimator.input());
+    const auto start = Clock::now();
+    if (!estimator.Run(error)) {
+      std::fprintf(stderr, "run failed on %s: %s\n", in.c_str(), error.c_str());
+      return 1;
+    }
+    run_ms.push_back(Ms(start, Clock::now()));
+    if (!WriteNpy(out, estimator.output(), {1, kNetSize, kNetSize})) {
+      std::fprintf(stderr, "cannot write %s\n", out.c_str());
+      return 1;
+    }
+  }
+  std::printf("ran %zu tensors\n", run_ms.size());
+  return 0;
+}
+
 int Bench(const Args& args, relume::IDepthEstimator& estimator) {
   const auto method = relume::ParseResizeMethod(
       args.Get("--method", std::string(relume::ToString(relume::kDefaultResizeMethod))));
@@ -323,6 +373,17 @@ int Bench(const Args& args, relume::IDepthEstimator& estimator) {
   if (!profile.empty()) {
     std::printf("profile: %s\n", profile.c_str());
   }
+  std::printf("peak resident memory: %.1f MiB\n", PeakResidentMiB());
+  std::printf(
+      "BENCH_JSON {\"description\": \"%s\", \"load_ms\": %.1f, \"warmup\": %d, \"runs\": %d, "
+      "\"preprocess_p50_ms\": %.3f, \"preprocess_p95_ms\": %.3f, \"run_p50_ms\": %.3f, \"run_p95_ms\": %.3f, "
+      "\"run_min_ms\": %.3f, \"run_max_ms\": %.3f, \"postprocess_p50_ms\": %.3f, \"total_p50_ms\": %.3f, "
+      "\"total_p95_ms\": %.3f, \"peak_resident_mib\": %.1f, \"profile\": \"%s\"}\n",
+      estimator.info().description.c_str(), estimator.info().load_ms, warmup, runs, Percentile(pre_ms, 50),
+      Percentile(pre_ms, 95), Percentile(run_ms, 50), Percentile(run_ms, 95),
+      *std::min_element(run_ms.begin(), run_ms.end()), *std::max_element(run_ms.begin(), run_ms.end()),
+      Percentile(post_ms, 50), Percentile(total_ms, 50), Percentile(total_ms, 95), PeakResidentMiB(),
+      profile.c_str());
   return 0;
 }
 
@@ -330,12 +391,17 @@ int Bench(const Args& args, relume::IDepthEstimator& estimator) {
 
 int main(int argc, char** argv) {
   const std::optional<Args> args = ParseArgs(argc, argv);
-  if (!args || (args->command != "run" && args->command != "run-tensor" && args->command != "bench")) {
+  if (!args || (args->command != "run" && args->command != "run-tensor" && args->command != "run-tensors" &&
+                args->command != "bench")) {
     return Usage();
   }
   const std::optional<relume::EstimatorConfig> config = MakeConfig(*args);
   if (!config) {
     return Usage();
+  }
+  if (!config->coreml_cache_dir.empty()) {
+    std::error_code ec;
+    std::filesystem::create_directories(config->coreml_cache_dir, ec);
   }
   std::unique_ptr<relume::IDepthEstimator> estimator = relume::MakeOnnxDepthEstimator(*config);
   std::string error;
@@ -349,6 +415,9 @@ int main(int argc, char** argv) {
   }
   if (args->command == "run-tensor") {
     return RunTensor(*args, *estimator);
+  }
+  if (args->command == "run-tensors") {
+    return RunTensors(*args, *estimator);
   }
   return Bench(*args, *estimator);
 }

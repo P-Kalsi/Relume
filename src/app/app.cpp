@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -1749,6 +1750,32 @@ std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error
   return options;
 }
 
+namespace {
+
+// Where CoreML keeps the models it compiles from ours (compiled models only,
+// never frames): ~/Library/Caches/dev.relume.app/coreml/<model>/<units>.
+// ONNX Runtime does not notice a changed model in its cache (its key is the
+// model path), so the folder name includes the model file's size and
+// modification time; a new export gets a fresh cache.
+std::string CoreMLCacheDirectory(const std::string& model_path, CoreMLUnits units) {
+  const std::string caches = UserCachesDirectory();
+  std::error_code ec;
+  const std::filesystem::path model(model_path);
+  const auto size = std::filesystem::file_size(model, ec);
+  if (caches.empty() || ec) {
+    return {};
+  }
+  const long long modified = static_cast<long long>(std::filesystem::last_write_time(model, ec).time_since_epoch().count());
+  if (ec) {
+    return {};
+  }
+  const std::string key = model.stem().string() + "-" + std::to_string(static_cast<unsigned long long>(size)) + "-" +
+                          std::to_string(modified);
+  return (std::filesystem::path(caches) / "dev.relume.app" / "coreml" / key / std::string(ToString(units))).string();
+}
+
+}  // namespace
+
 std::optional<DepthWorkerConfig> InferenceConfig(const AppOptions& options) {
   if (!options.inference) {
     return std::nullopt;
@@ -1757,6 +1784,9 @@ std::optional<DepthWorkerConfig> InferenceConfig(const AppOptions& options) {
   config.estimator.model_path = options.model_path;
   config.estimator.provider = *options.inference;
   config.estimator.coreml_units = options.coreml_units;
+  if (config.estimator.provider == ExecutionProvider::kCoreML) {
+    config.estimator.coreml_cache_dir = CoreMLCacheDirectory(options.model_path, options.coreml_units);
+  }
   config.estimator.intra_op_threads = options.threads;
   config.method = options.preprocess;
   return config;

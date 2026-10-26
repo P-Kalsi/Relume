@@ -44,4 +44,9 @@ double ProcessFootprintMiB() {
 
 bool IsApplicationActive() { return NSApp.isActive; }
 
+std::string UserCachesDirectory() {
+  NSArray<NSString*>* paths = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
+  return paths.count > 0 ? std::string(paths.firstObject.fileSystemRepresentation) : std::string();
+}
+
 }  // namespace relume

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 struct GLFWwindow;
 
 namespace relume {
@@ -23,5 +25,8 @@ double ProcessFootprintMiB();
 
 // True if this application is the active (frontmost) app.
 bool IsApplicationActive();
+
+// The user's caches folder (~/Library/Caches on macOS); empty if unknown.
+std::string UserCachesDirectory();
 
 }  // namespace relume

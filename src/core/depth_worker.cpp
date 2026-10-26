@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cmath>
 #include <exception>
+#include <filesystem>
 
 namespace relume {
 
@@ -271,6 +272,10 @@ bool DepthWorker::CreateEstimator(std::unique_ptr<IDepthEstimator>& estimator) {
   };
 
   std::string error;
+  if (!config_.estimator.coreml_cache_dir.empty()) {
+    std::error_code ec;  // a missing cache only costs a recompile
+    std::filesystem::create_directories(config_.estimator.coreml_cache_dir, ec);
+  }
   estimator = load(config_.estimator, error);
   if (!estimator && !stop_.load(std::memory_order_acquire) && config_.cpu_fallback &&
       config_.estimator.provider == ExecutionProvider::kCoreML) {
