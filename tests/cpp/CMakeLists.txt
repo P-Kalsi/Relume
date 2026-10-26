@@ -25,3 +25,6 @@ relume_add_gtest(test_guided_capture SOURCES test_guided_capture.cpp LIBS relume
 relume_add_gtest(test_preprocess SOURCES test_preprocess.cpp LIBS relume_core)
 target_compile_definitions(test_preprocess PRIVATE
   RELUME_GOLDEN_TEXT="${PROJECT_SOURCE_DIR}/tests/python/golden/preprocess_golden.txt")
+relume_add_gtest(test_onnx_depth SOURCES test_onnx_depth.cpp LIBS relume_inference)
+target_compile_definitions(test_onnx_depth PRIVATE
+  RELUME_TEST_MODEL="${PROJECT_SOURCE_DIR}/models/depth_anything_v2_small_448.onnx")

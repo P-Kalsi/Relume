@@ -29,7 +29,9 @@ scripts/setup_python.sh                        # .venv (python3.14, else python3
 RELUME_PYTHON=python3.12 scripts/setup_python.sh   # force an interpreter
 .venv/bin/python scripts/export.py             # -> models/depth_anything_v2_small_448.onnx + manifest
 .venv/bin/python scripts/check_parity.py       # PyTorch vs ONNX Runtime CPU; exits non-zero on failure
-.venv/bin/python scripts/compare_preprocessing.py   # informational letterbox/stretch/upstream comparison
+.venv/bin/python scripts/compare_preprocessing.py   # letterbox/stretch/upstream comparison (stretch is the default)
+.venv/bin/python scripts/check_native_parity.py     # C++ pipeline (relume_depth, release build) vs Python
+                                                    # preprocessing, Python ORT and PyTorch -> docs/native_parity_results.json
 .venv/bin/python -m pytest tests/python -v
 ```
 
@@ -59,10 +61,15 @@ CTest runs:
 - `python_preprocess` and `python_model_artifacts`: the pytest suites. They are registered
   only when `.venv` exists (`RELUME_PYTHON_TESTS`). The artifact suite
   fails, with instructions, if `scripts/export.py` has not been run.
+- `native_parity`: `scripts/check_native_parity.py` against that preset's
+  `relume_depth` (also needs `.venv`). Results go to the build tree, so
+  `ctest` never changes `docs/`.
 
 CTest also runs the native GoogleTest suites (`tests/cpp/`). They cover
-frame queue, pixel conversion, format negotiation, layout, status and file
-source; offscreen Dawn tests compare GPU output against the CPU reference.
+frame queue, pixel conversion, format negotiation, layout, status, file
+source, C++ preprocessing (against the golden vectors) and the ONNX Runtime
+estimator (skipped if the model is missing); offscreen Dawn tests compare GPU
+output against the CPU reference.
 It also runs three `app_headless_smoke_*` tests: the real pipeline from the
 file source, checked pixel by pixel. None of these needs a camera.
 
@@ -113,6 +120,21 @@ Phase 7). Closing Controls quits; closing Output only hides it.
 Relume.app is signed ad-hoc by default, so macOS asks for camera permission
 again after each rebuild. See `docs/signing.md` for an optional stable local
 identity (`-DRELUME_CODESIGN_IDENTITY=...`).
+
+## 3b. Native depth tool
+
+`relume_depth` runs C++ preprocessing and ONNX Runtime without a camera or
+GPU (the model path defaults to `models/depth_anything_v2_small_448.onnx`):
+
+```sh
+R=build/release/tools/relume_depth/relume_depth
+$R bench --threads 4 --runs 50                   # synthetic 1280x720; p50/p95 per stage
+$R bench --image some.ppm --method letterbox     # a PPM input; stretch is the default method
+$R run --image in.ppm --out-depth d.npy [--out-tensor t.npy]   # prints the transform as JSON
+$R run-tensor --tensor t.npy --out-depth d.npy  # ORT only, on a given 1x3x448x448 float32 tensor
+# --provider cpu|coreml --units ALL|CPUOnly|CPUAndGPU|CPUAndNeuralEngine --strict
+# --profile <prefix> (ORT profiling JSON) --cache <dir> --compute-plan --verbose
+```
 
 ## 4. Manual probes
 

@@ -23,6 +23,14 @@ set_source_files_properties(core/preprocess.cpp PROPERTIES COMPILE_OPTIONS "-ffp
 target_link_libraries(relume_core PUBLIC Threads::Threads)
 relume_set_warnings(relume_core)
 
+# relume_inference: depth estimation with ONNX Runtime behind the portable
+# IDepthEstimator interface. Portable C++; no Objective-C++.
+find_package(OnnxRuntime REQUIRED)
+add_library(relume_inference STATIC
+  inference/onnx_depth.cpp)
+target_link_libraries(relume_inference PUBLIC relume_core PRIVATE OnnxRuntime::OnnxRuntime)
+relume_set_warnings(relume_inference)
+
 # relume_camera: camera sources. The file source is portable.
 add_library(relume_camera STATIC
   camera/file_source.cpp)

@@ -29,10 +29,14 @@ option(RELUME_BUILD_ORT_PROBE "Build the ONNX Runtime provider probe" ON)
 option(RELUME_BUILD_DAWN_PROBE "Build the Dawn textured-quad probe" ON)
 option(RELUME_BUILD_CAMERA_PROBE "Build the AVFoundation camera probe (macOS only)" ${APPLE})
 option(RELUME_BUILD_TESTS "Build the native C++ unit tests (GoogleTest)" ON)
+option(RELUME_BUILD_TOOLS "Build the relume_depth command-line tool" ON)
 
 enable_testing()
 
 add_subdirectory(src)
+if(RELUME_BUILD_TOOLS)
+  add_subdirectory(tools/relume_depth)
+endif()
 if(RELUME_BUILD_TESTS)
   add_subdirectory(tests/cpp)
 endif()
@@ -65,6 +69,16 @@ if(RELUME_PYTHON_TESTS)
     COMMAND "${RELUME_VENV_PYTHON}" -m pytest -q -p no:cacheprovider tests/python/test_model_artifacts.py
     WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
   set_tests_properties(python_preprocess python_model_artifacts PROPERTIES TIMEOUT 300)
+  # The C++ pipeline (relume_depth) against Python preprocessing, Python ONNX
+  # Runtime and PyTorch. Results go to the build tree, not docs/.
+  if(RELUME_BUILD_TOOLS)
+    add_test(NAME native_parity
+      COMMAND "${RELUME_VENV_PYTHON}" scripts/check_native_parity.py --cli $<TARGET_FILE:relume_depth>
+              --results "${CMAKE_CURRENT_BINARY_DIR}/native_parity_results.json"
+              --work-dir "${CMAKE_CURRENT_BINARY_DIR}/native_parity"
+      WORKING_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}")
+    set_tests_properties(native_parity PROPERTIES TIMEOUT 600)
+  endif()
 else()
   message(STATUS "Python model tests not registered (run scripts/setup_python.sh to enable)")
 endif()
