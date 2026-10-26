@@ -6,7 +6,7 @@ import numpy as np
 import pytest
 
 from relume_model.fixtures import GENERATED
-from relume_model.golden import GOLDEN_PATH
+from relume_model.golden import GOLDEN_PATH, GOLDEN_TEXT_PATH, to_text
 from relume_model.preprocess import (
     DEFAULT_METHOD,
     MEAN,
@@ -166,3 +166,9 @@ def test_golden_vectors():
         assert t.to_dict() == case["transform"], case["method"]
         for s in case["samples"]:
             np.testing.assert_allclose(tensor[0, :, s["y"], s["x"]], s["rgb"], rtol=0, atol=1e-6)
+
+
+def test_golden_text_twin_matches_json():
+    # The C++ tests read the text twin; it must be exactly the committed JSON.
+    assert GOLDEN_TEXT_PATH.read_text() == to_text(json.loads(GOLDEN_PATH.read_text())), \
+        "regenerate with: .venv/bin/python scripts/relume_model/golden.py --write-text"

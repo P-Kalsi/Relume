@@ -22,3 +22,6 @@ relume_add_gtest(test_gpu_upload SOURCES test_gpu_upload.cpp LIBS relume_render)
 relume_add_gtest(test_compositor_reuse SOURCES test_compositor_reuse.cpp LIBS relume_core)
 relume_add_gtest(test_frame_saver SOURCES test_frame_saver.cpp LIBS relume_core)
 relume_add_gtest(test_guided_capture SOURCES test_guided_capture.cpp LIBS relume_core)
+relume_add_gtest(test_preprocess SOURCES test_preprocess.cpp LIBS relume_core)
+target_compile_definitions(test_preprocess PRIVATE
+  RELUME_GOLDEN_TEXT="${PROJECT_SOURCE_DIR}/tests/python/golden/preprocess_golden.txt")

@@ -14,8 +14,12 @@ add_library(relume_core STATIC
   core/event_queue.cpp
   core/image_io.cpp
   core/frame_saver.cpp
-  core/guided_capture.cpp)
+  core/guided_capture.cpp
+  core/preprocess.cpp)
 target_include_directories(relume_core PUBLIC "${PROJECT_SOURCE_DIR}/include")
+# The preprocessing contract is matched against numpy, which rounds every
+# product and sum separately: no fused multiply-add.
+set_source_files_properties(core/preprocess.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 target_link_libraries(relume_core PUBLIC Threads::Threads)
 relume_set_warnings(relume_core)
 
