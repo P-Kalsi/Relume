@@ -89,13 +89,17 @@
     "direction": "larger_is_nearer",
     "direction_evidence": "visual check of 5 pinned upstream demo images (demo01/03/07/10/16), confirmed by the developer on 2026-10-23; not a metric measurement",
     "in_graph_postprocessing": "ReLU only",
-    "postprocessing_outside_graph": "crop letterbox padding, then bilinear (half-pixel) resize to source size; display normalization (2nd-98th percentile) for visualization only"
+    "postprocessing_outside_graph": "crop any letterbox padding (none for the default stretch), then bilinear (half-pixel) resize to source size; display normalization (2nd-98th percentile) for visualization only"
   },
   "preprocessing": {
-    "status": "provisional - letterbox kept for Phase 1; before Phase 3, compare letterbox vs stretch on local webcam frames with faces, hair, shoulders and varied lighting (see docs/preprocessing_comparison.json)",
+    "status": "selected - stretch is the default (developer decision 2026-10-26, after comparing letterbox vs stretch on 12 local webcam stills and 2 bursts; see docs/preprocessing_comparison.json and docs/decisions.md); letterbox stays supported for tests and comparisons",
+    "default_method": "stretch",
     "input": "HxWx3 RGB uint8 (callers convert BGR/BGRA/NV12 to RGB; alpha dropped)",
     "scale": "float32 value / 255 -> [0, 1]",
-    "aspect_policy": "letterbox: s = 448 / max(W, H); new = max(1, round(dim * s)) (round half to even); pad = (448 - new) // 2, centred",
+    "aspect_policy": {
+      "stretch": "default: resize directly to 448 x 448 (aspect ratio not kept; a 16:9 frame is squeezed 1.78x horizontally); new = 448, pad = 0",
+      "letterbox": "supported: s = 448 / max(W, H); new = max(1, round(dim * s)) (round half to even); pad = (448 - new) // 2, centred"
+    },
     "resize": "bilinear, half-pixel centres, edge clamped; source u = (j + 0.5) * W / new_w - 0.5; separable, horizontal pass then vertical, float32",
     "pad_value_rgb": [
       0.48500001430511475,
@@ -122,7 +126,7 @@
       448,
       448
     ],
-    "inverse": "crop [pad_y:pad_y+new_h, pad_x:pad_x+new_w] then the same bilinear resize to src size",
+    "inverse": "crop [pad_y:pad_y+new_h, pad_x:pad_x+new_w] (the whole tensor for stretch) then the same bilinear resize to src size",
     "coordinates": "continuous, pixel i centre at i + 0.5; net = src * (new/src) + pad"
   },
   "parity": {

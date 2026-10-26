@@ -8,11 +8,13 @@ import pytest
 from relume_model.fixtures import GENERATED
 from relume_model.golden import GOLDEN_PATH
 from relume_model.preprocess import (
+    DEFAULT_METHOD,
     MEAN,
     NET_SIZE,
     STD,
     _axis_samples,
     compute_transform,
+    contract_description,
     depth_to_source,
     preprocess,
     resize_bilinear,
@@ -43,6 +45,14 @@ def test_stretch_placement():
     t = compute_transform(1280, 720, "stretch")
     assert (t.new_w, t.new_h, t.pad_x, t.pad_y) == (448, 448, 0, 0)
     assert t.sx == pytest.approx(448 / 1280) and t.sy == pytest.approx(448 / 720)
+
+
+def test_default_method_is_stretch():
+    # Approved 2026-10-26 (docs/decisions.md); letterbox stays supported.
+    assert DEFAULT_METHOD == "stretch"
+    assert compute_transform(1280, 720).method == "stretch"
+    assert preprocess(np.zeros((9, 17, 3), dtype=np.uint8))[1].method == "stretch"
+    assert contract_description()["default_method"] == "stretch"
 
 
 @pytest.mark.parametrize("method", ["letterbox", "stretch"])

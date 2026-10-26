@@ -539,18 +539,18 @@
     }
   ],
   "latency_cpu_informational": {
-    "input": "smooth_1280x720 letterbox tensor, 1x3x448x448",
+    "input": "smooth_1280x720 stretch tensor, 1x3x448x448",
     "pytorch_cpu": {
       "runs": 50,
       "warmup": 5,
-      "p50_ms": 318.8902080000844,
-      "p95_ms": 326.167691450064
+      "p50_ms": 319.57941699874937,
+      "p95_ms": 335.4564815512276
     },
     "onnxruntime_cpu": {
       "runs": 50,
       "warmup": 5,
-      "p50_ms": 331.6205000005539,
-      "p95_ms": 340.1608106000822
+      "p50_ms": 324.7377919979044,
+      "p95_ms": 332.7746498518536
     },
     "torch_threads": 4,
     "ort_intra_op_threads": "ORT default (0 = automatic)",

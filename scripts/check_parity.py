@@ -165,7 +165,7 @@ def main() -> int:
         "passed": not failures,
         "fixtures": rows,
         "latency_cpu_informational": {
-            "input": "smooth_1280x720 letterbox tensor, 1x3x448x448",
+            "input": f"smooth_1280x720 {pp.DEFAULT_METHOD} tensor, 1x3x448x448",
             "pytorch_cpu": latency(lambda: run_torch(bench_tensor)),
             "onnxruntime_cpu": latency(lambda: run_ort(bench_tensor)),
             "torch_threads": torch_threads,

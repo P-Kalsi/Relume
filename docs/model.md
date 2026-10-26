@@ -32,7 +32,7 @@ All dimensions are fixed; there are no dynamic axes. The op types are Add, Conca
 ConvTranspose, Div, Erf, Gather, LayerNormalization, MatMul, Mul, Relu,
 Reshape, Resize, Slice, Softmax, Squeeze, Transpose and Unsqueeze. Whether CoreML supports all of them is a Phase 3 question; it has not been tested.
 
-## Preprocessing contract (status: provisional)
+## Preprocessing contract (status: selected — stretch default)
 
 Implemented once in `scripts/relume_model/preprocess.py` and used by every
 Python path. Phase 3 C++ must reproduce it and match
@@ -41,46 +41,58 @@ Python path. Phase 3 C++ must reproduce it and match
 1. **Input:** an H×W×3 **RGB** uint8 image of any size of at least 1×1. Callers convert
    BGR/BGRA/NV12 to RGB first, dropping any alpha channel.
 2. **Scale:** convert to float32 and divide by 255, giving values in [0, 1].
-3. **Aspect ratio (letterbox):**
-   - `s = 448 / max(W, H)`
-   - `new_w = max(1, round(W·s))` and `new_h = max(1, round(H·s))`, rounding half to even
-   - `pad_x = (448 − new_w) // 2` and `pad_y = (448 − new_h) // 2`
-   - Example: 1280×720 becomes 448×252 with `pad_y = 98`.
+3. **Aspect ratio:** two methods are implemented. **Stretch is the default** (approved 2026-10-26, see `docs/decisions.md`); letterbox stays supported for tests and comparisons.
+   - **Stretch (default):** resize directly to 448×448, so `new_w = new_h = 448` and `pad_x = pad_y = 0`. The aspect ratio is not kept: a 16:9 frame is squeezed 1.78× horizontally.
+   - **Letterbox (supported):**
+     - `s = 448 / max(W, H)`
+     - `new_w = max(1, round(W·s))` and `new_h = max(1, round(H·s))`, rounding half to even
+     - `pad_x = (448 − new_w) // 2` and `pad_y = (448 − new_h) // 2`
+     - Example: 1280×720 becomes 448×252 with `pad_y = 98`.
 4. **Resize:** bilinear with half-pixel centres and clamped edges.
    - Output pixel `j` samples the source at `u = (j + 0.5)·W/new_w − 0.5`, clamped to `[0, W−1]`.
    - It is computed separably, horizontal pass first, in float32.
-5. **Pad:** fill the canvas with the ImageNet mean RGB `(0.485, 0.456, 0.406)`, which becomes exactly 0 after normalization.
+5. **Pad (letterbox only):** fill the canvas with the ImageNet mean RGB `(0.485, 0.456, 0.406)`, which becomes exactly 0 after normalization.
 6. **Normalize:** `(x − mean) / std`, with mean `(0.485, 0.456, 0.406)` and std `(0.229, 0.224, 0.225)`.
 7. **Layout:** a contiguous NCHW float32 tensor of shape [1, 3, 448, 448], channels in R, G, B order.
 
 **Coordinates.** Coordinates are continuous, with pixel *i*'s centre at *i* + 0.5.
 - Forward: `X_net = X_src · (new_w / W) + pad_x`, and the same for y.
 - Pixel-index form: `t = (i + 0.5)·sx − 0.5 + pad_x`, which is exactly where the resampler samples.
-- Inverse (`depth_to_source`): crop `[pad_y : pad_y+new_h, pad_x : pad_x+new_w]`, then apply the same bilinear resize to W×H.
+- Inverse (`depth_to_source`): crop `[pad_y : pad_y+new_h, pad_x : pad_x+new_w]` (the whole tensor for stretch), then apply the same bilinear resize to W×H.
 - Tests check that point mappings round-trip to within 1e-9 px, that the resampler and the mapping agree, and that images round-trip.
 
 **Differences from upstream `image2tensor`:**
 - Upstream uses a lower-bound resize to **518**, keeps the aspect ratio with each side a multiple of 14 (for example 924×518 for 16:9), uses **bicubic** interpolation (OpenCV), and adds no padding.
 - Its output is upsampled with `align_corners=True`.
-- Relume uses a fixed 448 input, bilinear interpolation with half-pixel centres, and mean padding. The trade-off is a fixed ONNX shape, lower cost and exact reproducibility in C++.
+- Relume uses a fixed 448 input, bilinear interpolation with half-pixel centres, and by default stretches instead of keeping the aspect ratio (letterbox pads with the mean). The trade-off is a fixed ONNX shape, lower cost and exact reproducibility in C++.
 
-## Preprocessing comparison (informational)
+## Preprocessing comparison
 
 `scripts/compare_preprocessing.py` compares three methods. Full numbers are in
 `docs/preprocessing_comparison.json`; panels are in `build/preproc_compare/` (local only).
 
 | Method | Description |
 |---|---|
-| A | Letterbox 448 (the current contract), ONNX Runtime CPU |
-| B | Stretch to 448×448, ignoring aspect ratio, ONNX Runtime CPU |
+| A | Letterbox 448, ONNX Runtime CPU |
+| B | Stretch to 448×448, ignoring aspect ratio, ONNX Runtime CPU (the default since 2026-10-26) |
 | C | Official upstream preprocessing at 518, PyTorch CPU. **This is the reference behaviour, not ground truth.** |
 
-**Images:** 5 pinned upstream demo images, at their original aspect ratio (about 3:2) and as 1280×720 centre crops (16:9).
+**Images:** 5 pinned upstream demo images, at their original aspect ratio (about 3:2) and as 1280×720 centre crops (16:9), plus (since 2026-10-26) 12 local webcam stills and two 20-frame bursts with the developer's face, captured with `--guided-capture`. The local frames and their panels never leave the Mac; the JSON holds only metrics and SHA-256 fingerprints.
 
 | Mean over images | Pearson A~C | Pearson B~C | Spearman A~C | Spearman B~C | Normalized mean abs diff A~C | Normalized mean abs diff B~C |
 |---|---|---|---|---|---|---|
 | Original aspect | 0.975 | 0.984 | 0.965 | 0.975 | 0.035 | 0.031 |
 | 16:9 crops | 0.967 | 0.981 | 0.952 | 0.973 | 0.053 | 0.040 |
+| 12 local webcam stills (1280×720) | 0.975 | 0.991 | 0.945 | 0.982 | 0.043 | 0.032 |
+
+**Local webcam frames, further metrics (mean of 12 stills, lower is better):** error at depth boundaries (top 10% gradient) A 0.064, B 0.051; on the subject (nearest 25%) A 0.044, B 0.030; top and bottom border bands A 0.064, B 0.035. Subject Spearman A 0.899, B 0.939. B beat A on both correlations in 11 of 12 stills; the backlit still was the exception (mean error A 0.031, B 0.051).
+
+**Temporal stability (mean |normalized depth change| between consecutive frames, lower is better):**
+
+| Burst | A letterbox | B stretch | C upstream |
+|---|---|---|---|
+| A (normal light), whole frame / subject | 0.0033 / 0.0025 | 0.0028 / 0.0015 | 0.0030 / 0.0017 |
+| B (harder light), whole frame / subject | 0.0066 / 0.0055 | 0.0086 / 0.0044 | 0.0048 / 0.0044 |
 
 **Observations (no accuracy claims):**
 - On these images, B's output is closer to upstream's than A's in 9 of 10 cases; demo10 at its original aspect is the exception. A plausible cause, not established: for a 16:9 frame, letterbox uses only a 448×252 region (about 576 ViT patches), while stretch uses 1,024. That gives more vertical detail, at the cost of squeezing the content horizontally 1.78×.
@@ -88,14 +100,14 @@ Python path. Phase 3 C++ must reproduce it and match
 - **B:** on demo16 (backlit), B places the left-side person and bike visibly nearer than C does.
 - **A and B:** on demo10, both miss a near door frame at the right edge that C shows.
 - **Letterbox boundary:** no artifact was seen. For A, the top and bottom 10% bands differ from C *less* than the interior does (0.042 vs 0.055 on 16:9).
-- **Faces were not tested.** No demo image contains a webcam-style face, so the effect of B's horizontal squeeze on faces is unknown.
+- **Faces:** tested on the local webcam stills (above). The developer's visual review found no meaningful overall disadvantage for B around faces, hair, shoulders or boundaries.
+- **Smooth facial depth:** in several frames both A and B give smooth, low-relief depth across the face. This is recorded as a limitation for judging relighting quality; it is not addressed in Phase 3.
 - **Latency:** PyTorch CPU takes 315 ms for 448×448 versus 1,042 ms for upstream's 518×924.
 
-**Decision:** letterbox **remains provisional**. Before Phase 3, compare A and B on
-real webcam frames with faces, hair, shoulders and varied lighting. Put those frames in
-`third_party/assets/local_frames/`; they stay local and git-ignored, and
-`compare_preprocessing.py` picks them up automatically. The contract changes
-only if that comparison gives a clear reason.
+**Decision (2026-10-26):** **stretch is the default.** The pre-registered numeric rule
+(B beats A on both correlations in ≥ 75% of webcam stills, and ≥ 10% lower mean error)
+was met, and the developer's visual review approved it. Letterbox stays supported.
+This deviates from the PRD §4.2 wording, which is unchanged; see `docs/decisions.md`.
 
 ## Output semantics
 
@@ -107,7 +119,7 @@ only if that comparison gives a clear reason.
 | Range | ≥ 0, because of the in-graph ReLU. There is no fixed upper bound: the maxima seen on the demo images range from 3.1 to 6.5. |
 | Zeros | Far regions are often **exactly 0** after the ReLU (sky, blurred background): the 2nd percentile was 0 for 3 of 5 demo images. Later normalization must cope with large flat zero areas. |
 | Postprocessing in the graph | ReLU only |
-| Postprocessing outside the graph | Crop the letterbox padding, then resize back to source size with the same bilinear rule. Display rendering clips to the 2nd–98th percentile, **for visualization only**. The raw tensor is kept. |
+| Postprocessing outside the graph | Crop any letterbox padding (none for stretch), then resize back to source size with the same bilinear rule. Display rendering clips to the 2nd–98th percentile, **for visualization only**. The raw tensor is kept. |
 
 Per-image observations (brighter = larger value = nearer):
 

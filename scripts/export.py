@@ -195,8 +195,9 @@ def main() -> int:
             "direction_evidence": "visual check of 5 pinned upstream demo images (demo01/03/07/10/16), "
                                   "confirmed by the developer on 2026-10-23; not a metric measurement",
             "in_graph_postprocessing": "ReLU only",
-            "postprocessing_outside_graph": "crop letterbox padding, then bilinear (half-pixel) resize to source size; "
-                                            "display normalization (2nd-98th percentile) for visualization only",
+            "postprocessing_outside_graph": "crop any letterbox padding (none for the default stretch), then bilinear "
+                                            "(half-pixel) resize to source size; display normalization "
+                                            "(2nd-98th percentile) for visualization only",
         },
         "preprocessing": pp.contract_description(),
         "parity": {"hard_ceilings": HARD_CEILINGS, "working_tolerances": WORKING_TOLERANCES},

@@ -15,10 +15,11 @@ Coordinate convention (used by both the resampler and the point mapping):
     u = (j + 0.5) / sx - 0.5, which is the same mapping inverted, clamped to
     [0, W - 1] (edge pixels repeat).
 
-Status: the letterbox policy is PROVISIONAL. On the pinned demo images,
-direct resizing ("stretch") agreed more closely with the official upstream
-preprocessing (docs/preprocessing_comparison.json); the choice will be revisited
-with real webcam frames containing faces before Phase 3.
+Status: "stretch" is the selected default (developer decision, 2026-10-26).
+On 12 local webcam stills with faces, and on the pinned demo images, it agreed
+more closely with the official upstream preprocessing than "letterbox" did
+(docs/preprocessing_comparison.json, docs/decisions.md). Letterbox remains a
+supported method for tests and comparisons.
 """
 
 from __future__ import annotations
@@ -32,6 +33,7 @@ MEAN = np.array([0.485, 0.456, 0.406], dtype=np.float32)  # ImageNet, RGB order
 STD = np.array([0.229, 0.224, 0.225], dtype=np.float32)
 
 METHODS = ("letterbox", "stretch")
+DEFAULT_METHOD = "stretch"
 
 
 @dataclass(frozen=True)
@@ -66,7 +68,7 @@ class ResizeTransform:
         return asdict(self)
 
 
-def compute_transform(src_w: int, src_h: int, method: str = "letterbox") -> ResizeTransform:
+def compute_transform(src_w: int, src_h: int, method: str = DEFAULT_METHOD) -> ResizeTransform:
     """Placement of a src_w x src_h image in the network tensor.
 
     letterbox: scale s = NET_SIZE / max(W, H), preserving aspect ratio;
@@ -115,12 +117,12 @@ def resize_bilinear(image: np.ndarray, out_w: int, out_h: int) -> np.ndarray:
     return rows[y0] * (np.float32(1) - wy) + rows[y1] * wy
 
 
-def preprocess(rgb: np.ndarray, method: str = "letterbox") -> tuple[np.ndarray, ResizeTransform]:
+def preprocess(rgb: np.ndarray, method: str = DEFAULT_METHOD) -> tuple[np.ndarray, ResizeTransform]:
     """HxWx3 RGB uint8 image → (1x3xNET_SIZExNET_SIZE float32 NCHW tensor, transform).
 
     Steps: /255 → resize (bilinear, half-pixel) → place on a canvas filled
-    with the ImageNet mean (letterbox) → (x - mean) / std → NCHW.
-    Padding is therefore exactly 0 after normalization.
+    with the ImageNet mean → (x - mean) / std → NCHW. Letterbox padding is
+    therefore exactly 0 after normalization; stretch has no padding.
     Callers convert BGR/BGRA/NV12 camera data to RGB first.
     """
     if rgb.dtype != np.uint8 or rgb.ndim != 3 or rgb.shape[2] != 3:
@@ -160,19 +162,26 @@ def depth_to_source(depth: np.ndarray, transform: ResizeTransform) -> np.ndarray
 def contract_description() -> dict:
     """Machine-readable summary of the contract, stored in the model manifest."""
     return {
-        "status": "provisional - letterbox kept for Phase 1; before Phase 3, compare letterbox vs stretch "
-                  "on local webcam frames with faces, hair, shoulders and varied lighting "
-                  "(see docs/preprocessing_comparison.json)",
+        "status": "selected - stretch is the default (developer decision 2026-10-26, after comparing "
+                  "letterbox vs stretch on 12 local webcam stills and 2 bursts; see "
+                  "docs/preprocessing_comparison.json and docs/decisions.md); letterbox stays supported "
+                  "for tests and comparisons",
+        "default_method": DEFAULT_METHOD,
         "input": "HxWx3 RGB uint8 (callers convert BGR/BGRA/NV12 to RGB; alpha dropped)",
         "scale": "float32 value / 255 -> [0, 1]",
-        "aspect_policy": "letterbox: s = 448 / max(W, H); new = max(1, round(dim * s)) "
+        "aspect_policy": {
+            "stretch": "default: resize directly to 448 x 448 (aspect ratio not kept; a 16:9 frame is "
+                       "squeezed 1.78x horizontally); new = 448, pad = 0",
+            "letterbox": "supported: s = 448 / max(W, H); new = max(1, round(dim * s)) "
                          "(round half to even); pad = (448 - new) // 2, centred",
+        },
         "resize": "bilinear, half-pixel centres, edge clamped; source u = (j + 0.5) * W / new_w - 0.5; "
                   "separable, horizontal pass then vertical, float32",
         "pad_value_rgb": MEAN.tolist(),
         "normalize": {"mean": MEAN.tolist(), "std": STD.tolist(), "formula": "(x - mean) / std"},
         "layout": "NCHW, contiguous, float32, channel order R,G,B",
         "tensor_shape": [1, 3, NET_SIZE, NET_SIZE],
-        "inverse": "crop [pad_y:pad_y+new_h, pad_x:pad_x+new_w] then the same bilinear resize to src size",
+        "inverse": "crop [pad_y:pad_y+new_h, pad_x:pad_x+new_w] (the whole tensor for stretch) then the same "
+                   "bilinear resize to src size",
         "coordinates": "continuous, pixel i centre at i + 0.5; net = src * (new/src) + pad",
     }

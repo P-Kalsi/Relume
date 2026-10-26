@@ -78,8 +78,8 @@ Phase 3, then `docs/decisions.md` (Phase 2 sections) and `docs/architecture.md`.
 6. **OBS Virtual Camera exclusion with OBS present** (unit-tested only).
 7. **The IOSurface reuse rule's assumption:** Core Animation applies commits in order and never shows superseded contents. It is measured, not proven, and the rule's hold-back path never triggered in a real run. Not claimed race-free.
 
-## Open decision before Phase 3
-**Letterbox vs stretch preprocessing** is still provisional. Compare the two on local webcam frames with faces (in the git-ignored `third_party/assets/local_frames/`, using `scripts/compare_preprocessing.py`). Change the contract only if that gives a clear reason.
+## Preprocessing decision (settled 2026-10-26)
+**Stretch is the default preprocessing method**, approved after comparing letterbox and stretch on 12 local webcam stills and 2 bursts (see `docs/decisions.md`, Phase 3). Letterbox stays supported for tests and comparisons. The webcam frames stay local in the git-ignored `third_party/assets/local_frames/`.
 
 ## Rules learned
 - Every rebuild changes the ad-hoc signature, so macOS asks for camera permission again. Tell the user before each camera launch.
