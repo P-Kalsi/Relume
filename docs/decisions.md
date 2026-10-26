@@ -362,6 +362,52 @@ Output window is resized and minimized, on a fixed schedule).
   efficiency cores for capture, rendering and the UI. Preprocessing takes
   1.7 ms and `DepthToSource` 0.6 ms (p50).
 
+### Inference scheduling (Step 5)
+
+- **`DepthWorker`** (one joined `std::thread` per worker) creates the
+  estimator on its own thread, runs 2 warm-ups, then loops: wait for a frame
+  newer than the last one it saw (`LatestFrameSlot::WaitTakeIfNew`), convert it
+  to RGB, **release the camera frame**, preprocess, run, publish to a
+  `LatestDepthSlot`. Stale frames are skipped, never queued. Results come from a
+  4-buffer recycling pool.
+- **Independent consumers:** taking a frame never removes it. The renderer and
+  the worker each keep their own last-seen frame, so neither starves the other.
+- **Camera generation:** `LatestFrameSlot` counts `Clear()` calls, and the
+  capture controller clears it whenever a source stops. Each frame taken
+  carries that generation, and so does each depth result. A new source numbers
+  its frames from 1 again, so the worker compares (generation, frame ID); the
+  first test run found that comparing the ID alone skipped a new camera's first
+  frame.
+- **Matching:** the main thread uses depth only if its camera generation,
+  source size and transform match the image being shown (`MatchDepth`).
+  Mismatches are counted and never displayed. Stats report depth age (now −
+  the source frame's arrival, steady clock) and frame lag (camera frames shown
+  since the depth's frame); only lag 0 is "in sync".
+- **`InferenceController`** (main thread): a configuration change or "off"
+  stops the active worker (stop flag, `Terminate()`, wake) and moves it to a
+  retiring slot; it is joined only after `finished()` is true. At most one
+  active and one retiring worker; the newest request is kept as pending and
+  starts once nothing is retiring. Results carry the worker generation; a
+  retired worker's depth is never handed out. Fake-estimator tests: 20 rapid
+  changes, each `Request` + `Update` under 1 ms, at most 2 live sessions, all
+  workers joined.
+- **Status** is derived from the worker's facts: Off, Loading (session
+  creation, warm-up or switching), Ready (provider), CPU fallback (CoreML was
+  requested and failed to load), Error (the output stays passthrough).
+- **Shutdown:** stop capture, hide both windows, stop and join the workers.
+  A join may wait for a session creation that ONNX Runtime cannot interrupt;
+  it happens after the UI is gone and the wait is logged (57–104 ms in the
+  display tests on CPU).
+- **Defaults:** windowed runs use CPU inference (4 threads). `--headless`,
+  `--guided-capture` and `--save-frames` default to off unless `--inference`
+  is given. Reason, measured: with inference on, the Debug build's guided
+  self-test lost a burst frame (its writer could not keep up while ORT used 4
+  cores); Release passed 6 of 6 runs (RGB and NV12, 0 frames skipped). Capture
+  tools do not need depth.
+- **Responsiveness with inference on (display tests, Debug):** the occlusion
+  test passes with CPU inference running: 30.0 fps composed and max iteration
+  17.7 ms in every judged phase (unchanged from Phase 2).
+
 ### Known limitations (recorded, out of Phase 3 scope)
 
 - **Facial depth is fairly smooth.** In several frames, both letterbox and

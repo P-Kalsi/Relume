@@ -10,12 +10,14 @@ add_library(relume_core STATIC
   core/camera_format.cpp
   core/layout.cpp
   core/app_state.cpp
-  core/stats.cpp
   core/event_queue.cpp
   core/image_io.cpp
   core/frame_saver.cpp
   core/guided_capture.cpp
-  core/preprocess.cpp)
+  core/preprocess.cpp
+  core/depth_estimator.cpp
+  core/depth_worker.cpp
+  core/inference_controller.cpp)
 target_include_directories(relume_core PUBLIC "${PROJECT_SOURCE_DIR}/include")
 # The preprocessing contract is matched against numpy, which rounds every
 # product and sum separately: no fused multiply-add.
@@ -98,8 +100,9 @@ target_include_directories(Relume PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
 # Default folder for --save-frames (git-ignored). Absolute, because `open`
 # starts the app in /.
 target_compile_definitions(Relume PRIVATE
-  RELUME_DEFAULT_FRAME_DIR="${PROJECT_SOURCE_DIR}/third_party/assets/local_frames")
-target_link_libraries(Relume PRIVATE relume_camera relume_render relume_imgui glfw)
+  RELUME_DEFAULT_FRAME_DIR="${PROJECT_SOURCE_DIR}/third_party/assets/local_frames"
+  RELUME_DEFAULT_MODEL="${PROJECT_SOURCE_DIR}/models/depth_anything_v2_small_448.onnx")
+target_link_libraries(Relume PRIVATE relume_camera relume_render relume_inference relume_imgui glfw)
 relume_set_warnings(Relume)
 
 # Headless smoke tests: the real pipeline from a file source to the output
@@ -112,6 +115,24 @@ add_test(NAME app_headless_smoke_rgb_tall
   COMMAND Relume --headless --source file --pattern 480x640 --pixel-format rgb --frames 10)
 set_tests_properties(app_headless_smoke_bgra_720p app_headless_smoke_nv12_4x3 app_headless_smoke_rgb_tall
   PROPERTIES TIMEOUT 60)
+# The same, with the real depth pipeline (ONNX Runtime CPU): a depth result
+# must arrive and match the shown frame's camera generation, size and
+# transform. Registered only when the exported model exists.
+if(EXISTS "${PROJECT_SOURCE_DIR}/models/depth_anything_v2_small_448.onnx")
+  add_test(NAME app_headless_inference_nv12_720p
+    COMMAND Relume --headless --source file --pattern 1280x720 --pixel-format nv12 --frames 30 --inference cpu)
+  add_test(NAME app_headless_inference_portrait_letterbox
+    COMMAND Relume --headless --source file --pattern 480x640 --pixel-format bgra --frames 10 --inference cpu
+            --preprocess letterbox)
+  add_test(NAME app_headless_inference_missing_model
+    COMMAND Relume --headless --source file --frames 10 --inference cpu --model /nonexistent/model.onnx)
+  set_tests_properties(app_headless_inference_nv12_720p app_headless_inference_portrait_letterbox
+    PROPERTIES TIMEOUT 120)
+  # A missing model must be an error state, not a crash or a hang: the run
+  # reports the Error status and passthrough, and refuses to call it a match.
+  set_tests_properties(app_headless_inference_missing_model PROPERTIES TIMEOUT 60
+    PASS_REGULAR_EXPRESSION "Depth: Error [|].*passthrough.*\n.*depth matches the shown camera image.*: NO")
+endif()
 
 # Window occlusion regression test: opens real windows, covers, resizes and
 # minimizes them for about a minute, and fails if presentation ever blocks.

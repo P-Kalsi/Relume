@@ -9,6 +9,7 @@
 #include "relume/frame_queue.hpp"
 #include "relume/guided_capture.hpp"
 #include "relume/image_io.hpp"
+#include "relume/inference_controller.hpp"
 #include "relume/layout.hpp"
 #include "relume/pixel_convert.hpp"
 #include "relume/renderer.hpp"
@@ -56,7 +57,14 @@ constexpr char kUsage[] =
     "  --save-dir <path>         where to save (default: third_party/assets/local_frames, git-ignored)\n"
     "  --guided-capture          off by default: take 12 stills and 2 bursts one at a time from the\n"
     "                            Controls window, saved to the --save-dir folder (file source: UI\n"
-    "                            testing only, and only with an explicit --save-dir)\n";
+    "                            testing only, and only with an explicit --save-dir)\n"
+    "  --inference off|cpu|coreml depth inference (default: cpu; off for --headless, --guided-capture\n"
+    "                            and --save-frames unless given; headless with --inference also\n"
+    "                            checks that matching depth arrives)\n"
+    "  --coreml-units ALL|CPUOnly|CPUAndGPU|CPUAndNeuralEngine  CoreML compute units (default ALL)\n"
+    "  --model <path.onnx>       depth model (default: models/depth_anything_v2_small_448.onnx)\n"
+    "  --threads <N>             ONNX Runtime CPU threads, 1-16 (default 4)\n"
+    "  --preprocess stretch|letterbox  resize policy (default stretch)\n";
 
 using Clock = std::chrono::steady_clock;
 
@@ -71,11 +79,15 @@ struct VideoPipeline {
 
   // Uploads and composes the newest frame, if there is a new one.
   bool Update(LatestFrameSlot& slot) {
-    std::shared_ptr<const VideoFrame> frame = slot.TakeIfNew(last_frame_id);
+    std::uint64_t generation = 0;
+    std::shared_ptr<const VideoFrame> frame = slot.TakeIfNew(last_frame_id, &generation);
     if (!frame) {
       return false;
     }
     last_frame_id = frame->frame_id;
+    camera_generation = generation;
+    frame_width = frame->width;
+    frame_height = frame->height;
     if (!uploader.Upload(*frame)) {
       ++rejected;
       return false;
@@ -105,10 +117,90 @@ struct VideoPipeline {
   OutputCompositor compositor;
   Presenter presenter;
   std::uint64_t last_frame_id = 0;
+  std::uint64_t camera_generation = 0;  // LatestFrameSlot generation of the frame being shown
+  std::uint32_t frame_width = 0;
+  std::uint32_t frame_height = 0;
   std::uint64_t composed = 0;
   std::uint64_t rejected = 0;
   bool showing_video = false;
   std::function<void(const VideoFrame&)> on_frame;  // only with --save-frames or --guided-capture
+};
+
+// The main thread's view of depth: the newest result of the active worker,
+// whether it belongs to the camera image being shown, and how old it is.
+// Depth is never presented as in sync unless its frame is the one shown.
+class DepthTracker {
+ public:
+  explicit DepthTracker(ResizeMethod method) : method_(method) {}
+
+  // Takes the newest result of the active worker, if there is a new one.
+  void Update(LatestDepthSlot& slot, const InferenceController& inference, const VideoPipeline& pipeline,
+              Clock::time_point now) {
+    const std::uint64_t generation = inference.active_generation();
+    if (generation != worker_generation_) {
+      worker_generation_ = generation;  // a new worker: forget the old one's depth
+      last_sequence_ = 0;
+      current_.reset();
+    }
+    if (std::shared_ptr<const DepthResult> result = slot.TakeIfNew(generation, last_sequence_)) {
+      last_sequence_ = result->sequence;
+      current_ = std::move(result);
+      ++taken_;
+      if (Match(pipeline) == DepthMatch::kMatch) {
+        age_ms_.Record(std::chrono::duration<double, std::milli>(now - current_->arrival_time).count());
+        ++lag_counts_[std::min<std::uint64_t>(Lag(pipeline), kLagBuckets - 1)];
+      } else {
+        ++mismatched_;
+      }
+    }
+  }
+
+  DepthMatch Match(const VideoPipeline& pipeline) const {
+    return MatchDepth(current_.get(), pipeline.camera_generation, pipeline.frame_width, pipeline.frame_height,
+                      method_);
+  }
+  // Camera frames shown since the depth's frame (0 = in sync).
+  std::uint64_t Lag(const VideoPipeline& pipeline) const {
+    return current_ && pipeline.last_frame_id >= current_->frame_id ? pipeline.last_frame_id - current_->frame_id : 0;
+  }
+  const DepthResult* current() const { return current_.get(); }
+
+  // Stats since the last Reset.
+  std::uint64_t taken() const { return taken_; }
+  std::uint64_t mismatched() const { return mismatched_; }
+  double AgePercentile(double p) const { return age_ms_.Percentile(p); }
+  std::uint64_t LagPercentile(double p) const {
+    std::uint64_t total = 0;
+    for (const std::uint64_t c : lag_counts_) {
+      total += c;
+    }
+    const auto rank = static_cast<std::uint64_t>(std::ceil(p * static_cast<double>(total)));
+    std::uint64_t seen = 0;
+    for (std::size_t i = 0; i < kLagBuckets; ++i) {
+      seen += lag_counts_[i];
+      if (total > 0 && seen >= rank) {
+        return i;
+      }
+    }
+    return 0;
+  }
+  void ResetStats() {
+    taken_ = 0;
+    mismatched_ = 0;
+    age_ms_.Reset();
+    lag_counts_.fill(0);
+  }
+
+ private:
+  static constexpr std::size_t kLagBuckets = 64;  // the last bucket means "63 or more"
+  ResizeMethod method_;
+  std::uint64_t worker_generation_ = 0;
+  std::uint64_t last_sequence_ = 0;
+  std::shared_ptr<const DepthResult> current_;
+  std::uint64_t taken_ = 0;
+  std::uint64_t mismatched_ = 0;
+  WideLatencyHistogram age_ms_;
+  std::array<std::uint64_t, kLagBuckets> lag_counts_{};
 };
 
 bool ParseSize(std::string_view text, std::uint32_t& width, std::uint32_t& height) {
@@ -149,7 +241,8 @@ class StatsLogger {
 
   void Maybe(Clock::time_point now, const ICameraSource* source, const LatestFrameSlot& slot,
              const VideoPipeline& pipeline, const WindowPresenter* output = nullptr,
-             const WindowPresenter* controls = nullptr) {
+             const WindowPresenter* controls = nullptr, InferenceController* inference = nullptr,
+             DepthTracker* depth = nullptr, const LatestDepthSlot* depth_slot = nullptr) {
     const double elapsed = Seconds(now - last_);
     if (interval_s_ <= 0.0 || elapsed < interval_s_) {
       return;
@@ -187,6 +280,9 @@ class StatsLogger {
       std::printf("[stats] windows: Output presented %.1f/s skipped %.1f/s | Controls presented %.1f/s skipped %.1f/s\n",
                   op, os, cp, cs);
     }
+    if (inference != nullptr && depth != nullptr && depth_slot != nullptr) {
+      PrintDepth(elapsed, *inference, *depth, *depth_slot, pipeline);
+    }
     std::fflush(stdout);
     last_ = now;
     last_received_ = capture.frames_received;
@@ -197,7 +293,47 @@ class StatsLogger {
   }
 
  private:
+  void PrintDepth(double elapsed, InferenceController& inference, DepthTracker& depth,
+                  const LatestDepthSlot& depth_slot, const VideoPipeline& pipeline) {
+    const InferenceStatus status = inference.status();
+    DepthWorker* worker = inference.active();
+    if (worker == nullptr) {
+      std::printf("[stats] depth: %s\n", status.label.c_str());
+      return;
+    }
+    const WorkerSnapshot snapshot = worker->snapshot();
+    if (worker != last_worker_) {
+      last_worker_ = worker;
+      last_results_ = 0;
+    }
+    const SlotStats slot_stats = depth_slot.stats();
+    // Inference stage times are measured on the worker; age (now minus the
+    // source frame's arrival, steady clock) and lag (camera frames shown since
+    // the depth's frame) when the main thread takes a result that matches the
+    // frame being shown.
+    std::printf(
+        "[stats] depth: %s | %.1f results/s | convert p50 %.0f p95 %.0f, preprocess p50 %.0f p95 %.0f, "
+        "run p50 %.0f p95 %.0f, total p50 %.0f p95 %.0f ms | age p50 %.0f p95 %.0f ms | lag p50 %llu p95 %llu "
+        "frames | now: %s, lag %llu | unread-dropped %llu, mismatched %llu, invalid range %llu, bad frames %llu\n",
+        status.label.c_str(), static_cast<double>(snapshot.results - last_results_) / elapsed,
+        worker->convert_ms.Percentile(0.5), worker->convert_ms.Percentile(0.95), worker->preprocess_ms.Percentile(0.5),
+        worker->preprocess_ms.Percentile(0.95), worker->run_ms.Percentile(0.5), worker->run_ms.Percentile(0.95),
+        worker->total_ms.Percentile(0.5), worker->total_ms.Percentile(0.95), depth.AgePercentile(0.5),
+        depth.AgePercentile(0.95), static_cast<unsigned long long>(depth.LagPercentile(0.5)),
+        static_cast<unsigned long long>(depth.LagPercentile(0.95)), ToString(depth.Match(pipeline)).data(),
+        static_cast<unsigned long long>(depth.Lag(pipeline)), static_cast<unsigned long long>(slot_stats.dropped_unread),
+        static_cast<unsigned long long>(depth.mismatched()), static_cast<unsigned long long>(snapshot.invalid_ranges),
+        static_cast<unsigned long long>(snapshot.invalid_frames));
+    last_results_ = snapshot.results;
+    for (WideLatencyHistogram* h : {&worker->convert_ms, &worker->preprocess_ms, &worker->run_ms, &worker->total_ms}) {
+      h->Reset();
+    }
+    depth.ResetStats();
+  }
+
   double interval_s_;
+  const DepthWorker* last_worker_ = nullptr;
+  std::uint64_t last_results_ = 0;
   Clock::time_point last_;
   Clock::time_point last_render_{};
   LatencyHistogram render_interval_ms_;
@@ -288,15 +424,60 @@ int RunHeadless(const AppOptions& options) {
   source.Start();
   std::printf("%s\n", source.description().c_str());
 
+  // With --inference: the real depth pipeline runs too, and the run waits
+  // for a depth result that matches the frame being shown.
+  LatestDepthSlot depth_slot;
+  InferenceController inference(MakeOnnxDepthEstimator, slot, depth_slot);
+  DepthTracker depth(options.preprocess);
+  const std::optional<DepthWorkerConfig> inference_config = InferenceConfig(options);
+  if (inference_config) {
+    inference.Request(inference_config);
+  }
+  const auto depth_done = [&] {
+    return !inference_config || depth.Match(pipeline) == DepthMatch::kMatch ||
+           inference.status().state == InferenceState::kError;
+  };
+
   const std::uint64_t target = options.frames == 0 ? 30 : options.frames;
-  const Clock::time_point deadline = Clock::now() + std::chrono::seconds(30);
-  while (pipeline.composed < target && source.state() != SourceState::kFailed && Clock::now() < deadline) {
+  const Clock::time_point start = Clock::now();
+  const Clock::time_point deadline = start + std::chrono::seconds(inference_config ? 90 : 30);
+  while ((pipeline.composed < target || !depth_done()) && source.state() != SourceState::kFailed &&
+         Clock::now() < deadline) {
     if (!pipeline.Update(slot)) {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
+    inference.Update();
+    depth.Update(depth_slot, inference, pipeline, Clock::now());
     gpu->instance().ProcessEvents();
   }
   source.Stop();
+  int failures = 0;
+  if (inference_config) {
+    const InferenceStatus status = inference.status();
+    const DepthResult* result = depth.current();
+    const DepthMatch match = depth.Match(pipeline);
+    std::printf("Depth: %s | %s\n", status.label.c_str(), status.detail.c_str());
+    if (result != nullptr) {
+      const ResizeTransform& t = result->transform;
+      std::printf("  first matching result after %.0f ms: frame %llu (showing %llu, lag %llu), %ux%u %s -> %ux%u at "
+                  "(%u,%u); convert %.1f, preprocess %.1f, run %.1f ms; display range %s [%.3f, %.3f]\n",
+                  std::chrono::duration<double, std::milli>(result->finished_time - start).count(),
+                  static_cast<unsigned long long>(result->frame_id),
+                  static_cast<unsigned long long>(pipeline.last_frame_id),
+                  static_cast<unsigned long long>(depth.Lag(pipeline)), t.src_w, t.src_h, ToString(t.method).data(),
+                  t.new_w, t.new_h, t.pad_x, t.pad_y, result->convert_ms, result->preprocess_ms, result->run_ms,
+                  result->range.valid ? "valid" : "INVALID", result->range.lo, result->range.hi);
+    }
+    const bool ok = status.state == InferenceState::kReady && match == DepthMatch::kMatch && result != nullptr &&
+                    result->range.valid && result->frame_id <= pipeline.last_frame_id &&
+                    result->camera_generation == slot.generation();
+    std::printf("  depth matches the shown camera image (generation, size, transform): %s (%s)\n", ok ? "yes" : "NO",
+                ToString(match).data());
+    failures += ok ? 0 : 1;
+  }
+  if (inference_config) {
+    std::printf("Inference shutdown: joined in %.1f ms\n", inference.Shutdown());
+  }
   while (auto event = events.Poll()) {
     if (event->kind == CameraEvent::Kind::kSourceFailed) {
       std::fprintf(stderr, "FAIL: %s\n", event->message.c_str());
@@ -318,7 +499,6 @@ int RunHeadless(const AppOptions& options) {
   }
   std::printf("Output texture: %ux%u RGBA8\n", pipeline.output.texture().GetWidth(),
               pipeline.output.texture().GetHeight());
-  int failures = 0;
 
   const std::shared_ptr<const VideoFrame> last = slot.Latest();
   if (options.file.path.empty() && last) {
@@ -807,6 +987,13 @@ int RunWindowed(const AppOptions& options) {
   CameraEventQueue events;
   LatestFrameSlot slot;
   CaptureController capture(options, events, slot);
+  // Depth inference on its own thread; declared after the frame slot it
+  // reads, so it is destroyed (and its workers joined) first.
+  LatestDepthSlot depth_slot;
+  InferenceController inference(MakeOnnxDepthEstimator, slot, depth_slot);
+  DepthTracker depth(options.preprocess);
+  inference.Request(InferenceConfig(options));
+  InferenceStatus inference_status;
 
   StatsLogger stats(options.stats_interval_s);
   CaptureStatus status;
@@ -892,6 +1079,14 @@ int RunWindowed(const AppOptions& options) {
     } else {
       pipeline.ShowBlack();  // never a frozen or uninitialized frame
     }
+    inference.Update();  // never waits for a worker
+    depth.Update(depth_slot, inference, pipeline, Clock::now());
+    const InferenceStatus next_inference = inference.status();
+    if (next_inference.label != inference_status.label || next_inference.detail != inference_status.detail) {
+      std::printf("[inference] %s: %s\n", next_inference.label.c_str(), next_inference.detail.c_str());
+      std::fflush(stdout);
+    }
+    inference_status = next_inference;
     trace.Mark("compose");
     output.Render(pipeline.presenter);
     trace.Mark("output");
@@ -974,7 +1169,8 @@ int RunWindowed(const AppOptions& options) {
 
     const Clock::time_point now = Clock::now();
     stats.OnRender(now);
-    stats.Maybe(now, capture.source(), slot, pipeline, output.presenter(), controls.presenter());
+    stats.Maybe(now, capture.source(), slot, pipeline, output.presenter(), controls.presenter(), &inference, &depth,
+                &depth_slot);
     if (gpu->errors().device_lost()) {
       std::fprintf(stderr, "FAIL: the GPU device was lost\n");
       exit_code = 1;
@@ -990,8 +1186,15 @@ int RunWindowed(const AppOptions& options) {
       break;
     }
   }
+  // Shutdown order: stop capture, hide the windows, then stop and join the
+  // depth workers. A join can wait for a CoreML compile in progress; it
+  // happens after the UI is gone and its duration is logged.
   capture.StopSource();
   pipeline.on_frame = nullptr;
+  glfwHideWindow(output.window());
+  glfwHideWindow(controls.window());
+  std::printf("Inference shutdown: %llu workers started, joined in %.1f ms\n",
+              static_cast<unsigned long long>(inference.workers_started()), inference.Shutdown());
   if (guided) {
     std::printf("Guided capture: %u of %u stills and %u of %u bursts on disk; %u files written this session\n",
                 guided->saved_stills(), guided->stills_total(), guided->saved_bursts(), guided->bursts_total(),
@@ -1102,6 +1305,7 @@ int RunWindowed(const AppOptions& options) {
 std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error) {
   AppOptions options;
   options.save.directory = RELUME_DEFAULT_FRAME_DIR;
+  options.model_path = RELUME_DEFAULT_MODEL;
   bool pixel_format_set = false;
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i];
@@ -1223,6 +1427,50 @@ std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error
         return std::nullopt;
       }
       options.save.directory = v;
+    } else if (arg == "--inference") {
+      const char* v = value();
+      const std::string_view name = v != nullptr ? v : "";
+      if (name == "off") {
+        options.inference = std::nullopt;
+      } else if (const std::optional<ExecutionProvider> provider = ParseExecutionProvider(name)) {
+        options.inference = provider;
+      } else {
+        error = "--inference must be off, cpu or coreml";
+        return std::nullopt;
+      }
+      options.inference_set = true;
+    } else if (arg == "--coreml-units") {
+      const char* v = value();
+      const std::optional<CoreMLUnits> units = ParseCoreMLUnits(v != nullptr ? v : "");
+      if (!units) {
+        error = "--coreml-units must be ALL, CPUOnly, CPUAndGPU or CPUAndNeuralEngine";
+        return std::nullopt;
+      }
+      options.coreml_units = *units;
+    } else if (arg == "--model") {
+      const char* v = value();
+      if (v == nullptr || *v == '\0') {
+        error = "--model needs a path";
+        return std::nullopt;
+      }
+      options.model_path = v;
+    } else if (arg == "--threads") {
+      const char* v = value();
+      char* end = nullptr;
+      const long n = v != nullptr ? std::strtol(v, &end, 10) : 0;
+      if (v == nullptr || end == v || *end != '\0' || n < 1 || n > 16) {
+        error = "--threads needs a number from 1 to 16";
+        return std::nullopt;
+      }
+      options.threads = static_cast<int>(n);
+    } else if (arg == "--preprocess") {
+      const char* v = value();
+      const std::optional<ResizeMethod> method = ParseResizeMethod(v != nullptr ? v : "");
+      if (!method) {
+        error = "--preprocess must be stretch or letterbox";
+        return std::nullopt;
+      }
+      options.preprocess = *method;
     } else if (arg.rfind("-psn_", 0) == 0) {
       // Process serial number that older macOS passes to apps launched by Finder.
     } else if (arg == "--help" || arg == "-h") {
@@ -1266,7 +1514,26 @@ std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error
     error = "--headless needs --source file (it never opens the camera)";
     return std::nullopt;
   }
+  // Headless runs and the frame-capture modes do not need depth; capture in
+  // particular should not compete with inference for CPU (a Debug build's
+  // burst writer could not keep up). --inference turns it on explicitly.
+  if ((options.headless || options.guided_capture || options.save.count > 0) && !options.inference_set) {
+    options.inference = std::nullopt;
+  }
   return options;
+}
+
+std::optional<DepthWorkerConfig> InferenceConfig(const AppOptions& options) {
+  if (!options.inference) {
+    return std::nullopt;
+  }
+  DepthWorkerConfig config;
+  config.estimator.model_path = options.model_path;
+  config.estimator.provider = *options.inference;
+  config.estimator.coreml_units = options.coreml_units;
+  config.estimator.intra_op_threads = options.threads;
+  config.method = options.preprocess;
+  return config;
 }
 
 int RunApp(const AppOptions& options) { return options.headless ? RunHeadless(options) : RunWindowed(options); }

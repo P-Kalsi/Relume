@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/window.hpp"
+#include "relume/depth_worker.hpp"
 #include "relume/file_source.hpp"
 #include "relume/frame_saver.hpp"
 
@@ -26,7 +27,20 @@ struct AppOptions {
   FrameSaverOptions save;                 // --save-frames: off unless save.count > 0 (camera only)
   bool guided_capture = false;            // --guided-capture: shots taken from the Controls window
   bool guided_self_test = false;          // with --guided-capture --source file: script one still and one burst
+
+  // Depth inference. Default: CPU. Off for --headless, --guided-capture and
+  // --save-frames unless --inference is given (headless then also checks
+  // that matching depth arrives).
+  std::optional<ExecutionProvider> inference = ExecutionProvider::kCpu;  // nullopt = off
+  bool inference_set = false;             // --inference was given
+  CoreMLUnits coreml_units = CoreMLUnits::kAll;
+  std::string model_path;                 // default: models/depth_anything_v2_small_448.onnx in the repo
+  int threads = 4;                        // ONNX Runtime intra-op threads (measured choice; docs/decisions.md)
+  ResizeMethod preprocess = kDefaultResizeMethod;
 };
+
+// The depth worker configuration for `options`, or nullopt when inference is off.
+std::optional<DepthWorkerConfig> InferenceConfig(const AppOptions& options);
 
 // Parses command-line arguments. Returns nullopt and sets `error` (which may
 // be the usage text) on failure.

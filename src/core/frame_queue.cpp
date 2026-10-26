@@ -74,16 +74,54 @@ void LatestFrameSlot::Publish(std::shared_ptr<const VideoFrame> frame) {
     std::swap(frame_, frame);
     taken_ = false;
   }
+  // Notifying never waits for a consumer.
+  published_.notify_all();
   // `frame` now holds the replaced frame and is released here, outside the lock.
 }
 
-std::shared_ptr<const VideoFrame> LatestFrameSlot::TakeIfNew(std::uint64_t last_seen_id) {
+std::shared_ptr<const VideoFrame> LatestFrameSlot::TakeIfNew(std::uint64_t last_seen_id, std::uint64_t* generation) {
   std::lock_guard lock(mutex_);
   if (!frame_ || frame_->frame_id == last_seen_id) {
     return nullptr;
   }
   taken_ = true;
+  if (generation != nullptr) {
+    *generation = generation_;
+  }
   return frame_;
+}
+
+std::shared_ptr<const VideoFrame> LatestFrameSlot::WaitTakeIfNew(std::uint64_t last_seen_id,
+                                                                 std::uint64_t last_seen_generation,
+                                                                 std::chrono::milliseconds timeout,
+                                                                 std::uint64_t* generation) {
+  std::unique_lock lock(mutex_);
+  const std::uint64_t epoch = wake_epoch_;
+  const auto is_new = [&] {
+    return frame_ && (frame_->frame_id != last_seen_id || generation_ != last_seen_generation);
+  };
+  const bool ready = published_.wait_for(lock, timeout, [&] { return is_new() || wake_epoch_ != epoch; });
+  if (!ready || !is_new()) {
+    return nullptr;
+  }
+  taken_ = true;
+  if (generation != nullptr) {
+    *generation = generation_;
+  }
+  return frame_;
+}
+
+void LatestFrameSlot::WakeWaiters() {
+  {
+    std::lock_guard lock(mutex_);
+    ++wake_epoch_;
+  }
+  published_.notify_all();
+}
+
+std::uint64_t LatestFrameSlot::generation() const {
+  std::lock_guard lock(mutex_);
+  return generation_;
 }
 
 std::shared_ptr<const VideoFrame> LatestFrameSlot::Latest() {
@@ -103,6 +141,7 @@ void LatestFrameSlot::Clear() {
     }
     std::swap(frame_, released);
     taken_ = false;
+    ++generation_;
   }
 }
 
