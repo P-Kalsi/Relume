@@ -13,7 +13,17 @@ agreement and differences only; it makes no accuracy claims.
 
 Images: each pinned upstream demo image at its original aspect, plus a
 webcam-like 1280x720 (16:9) centre crop of it, plus any local frames you put
-in third_party/assets/local_frames/ (git-ignored, optional).
+in third_party/assets/local_frames/ (git-ignored, optional; Relume's
+--save-frames writes them there). Image files directly in that folder are
+stills; each subfolder is a burst of consecutive frames (sorted by name),
+used for the frame-to-frame stability metric.
+
+Pre-registered decision rule (fixed before any local frame was compared):
+recommend stretch only if, on the local stills, B beats A against C on both
+Pearson and Spearman in at least 75% of frames, and B's mean normalized MAD
+is at least 10% lower than A's; and the developer's visual review of faces,
+hair and edges finds B no worse. Otherwise keep letterbox. The script
+evaluates the numeric part only.
 
 Writes docs/preprocessing_comparison.json and panels in build/preproc_compare/.
 """
@@ -62,6 +72,18 @@ def ranks(x: np.ndarray) -> np.ndarray:
     return r
 
 
+def boundary_mask(reference: np.ndarray) -> np.ndarray:
+    """Depth boundaries of the reference: the top 10% of its normalized gradient magnitude."""
+    gy, gx = np.gradient(robust_unit(reference))
+    magnitude = np.hypot(gx, gy)
+    return magnitude >= np.percentile(magnitude, 90)
+
+
+def subject_mask(reference: np.ndarray) -> np.ndarray:
+    """Nearest quarter of the reference (larger = nearer): a proxy for the person in a webcam frame."""
+    return reference >= np.percentile(reference, 75)
+
+
 def agreement(a: np.ndarray, c: np.ndarray) -> dict:
     """a, c: same-shape source-resolution depth maps. Subsampled for speed."""
     a_s, c_s = a[::4, ::4].ravel(), c[::4, ::4].ravel()
@@ -70,12 +92,62 @@ def agreement(a: np.ndarray, c: np.ndarray) -> dict:
     band = max(1, a.shape[0] // 10)  # top and bottom 10% of rows
     edge = np.concatenate([diff[:band], diff[-band:]])
     interior = diff[band:-band]
+    boundary = boundary_mask(c)
+    subject = subject_mask(c)
+    sub_a, sub_c = a[subject][::16], c[subject][::16]
     return {
         "pearson": float(np.corrcoef(a_s, c_s)[0, 1]),
         "spearman": float(np.corrcoef(ranks(a_s), ranks(c_s))[0, 1]),
         "mean_abs_diff_normalized": float(diff.mean()),
         "edge_band_mean_abs_diff": float(edge.mean()),
         "interior_mean_abs_diff": float(interior.mean()),
+        "boundary_mean_abs_diff": float(diff[boundary].mean()),
+        "non_boundary_mean_abs_diff": float(diff[~boundary].mean()),
+        "subject_mean_abs_diff": float(diff[subject].mean()),
+        "subject_spearman": float(np.corrcoef(ranks(sub_a), ranks(sub_c))[0, 1]),
+    }
+
+
+def flicker(depths: list[np.ndarray]) -> dict:
+    """Frame-to-frame change of consecutive normalized depth maps (whole frame and subject region)."""
+    units = [robust_unit(d) for d in depths]
+    whole = [float(np.abs(u1 - u0).mean()) for u0, u1 in zip(units, units[1:])]
+    subject = [float(np.abs(u1 - u0)[subject_mask(d1)].mean()) for u0, u1, d1 in zip(units, units[1:], depths[1:])]
+    return {"mean_abs_frame_diff": float(np.mean(whole)), "p95_abs_frame_diff": float(np.percentile(whole, 95)),
+            "subject_mean_abs_frame_diff": float(np.mean(subject))}
+
+
+def local_frames() -> tuple[list[Path], dict[str, list[Path]]]:
+    """Stills (files directly in LOCAL_FRAMES) and bursts (one per subfolder)."""
+    def images_in(folder: Path) -> list[Path]:
+        return sorted(p for p in folder.glob("*") if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".ppm"})
+    if not LOCAL_FRAMES.is_dir():
+        return [], {}
+    bursts = {d.name: images_in(d) for d in sorted(LOCAL_FRAMES.iterdir()) if d.is_dir()}
+    return images_in(LOCAL_FRAMES), {k: v for k, v in bursts.items() if len(v) >= 2}
+
+
+def decision_rule(rows: list[dict]) -> dict | None:
+    """Numeric part of the pre-registered rule, on the local stills."""
+    local = [r for r in rows if r["kind"] == "local_frame"]
+    if not local:
+        return None
+    a = [r["A_letterbox_vs_C_upstream"] for r in local]
+    b = [r["B_stretch_vs_C_upstream"] for r in local]
+    wins = sum(1 for x, y in zip(a, b) if y["pearson"] > x["pearson"] and y["spearman"] > x["spearman"])
+    mad_a = float(np.mean([x["mean_abs_diff_normalized"] for x in a]))
+    mad_b = float(np.mean([y["mean_abs_diff_normalized"] for y in b]))
+    win_fraction = wins / len(local)
+    mad_reduction = 1.0 - mad_b / mad_a if mad_a > 0 else 0.0
+    return {
+        "frames": len(local),
+        "B_wins_both_correlations": wins,
+        "B_win_fraction": win_fraction,
+        "mean_mad_A": mad_a,
+        "mean_mad_B": mad_b,
+        "B_mad_reduction": mad_reduction,
+        "numeric_rule_met": bool(win_fraction >= 0.75 and mad_reduction >= 0.10),
+        "note": "Numeric part only; stretch also requires the developer's visual review to find B no worse.",
     }
 
 
@@ -131,10 +203,9 @@ def main() -> int:
         stem = Path(name).stem
         images.append((f"{stem}_original", "upstream_demo", digest, rgb))
         images.append((f"{stem}_webcam16x9", "upstream_demo_cropped_16x9", digest, webcam_crop(rgb)))
-    if LOCAL_FRAMES.is_dir():
-        for path in sorted(LOCAL_FRAMES.glob("*")):
-            if path.suffix.lower() in {".jpg", ".jpeg", ".png"}:
-                images.append((path.stem, "local_frame", None, load_rgb(path)))
+    stills, bursts = local_frames()
+    for path in stills:
+        images.append((path.stem, "local_frame", None, load_rgb(path)))
 
     rows = []
     for name, kind, digest, rgb in images:
@@ -164,6 +235,18 @@ def main() -> int:
               f"spearman {r['B_stretch_vs_C_upstream']['spearman']:.4f} "
               f"mad {r['B_stretch_vs_C_upstream']['mean_abs_diff_normalized']:.4f} | C input {c_shape[2]}x{c_shape[3]}")
 
+    stability = {}
+    for burst, paths in bursts.items():
+        frames = [load_rgb(p) for p in paths]
+        per_method = {"A_letterbox": [method_ab(f, "letterbox") for f in frames],
+                      "B_stretch": [method_ab(f, "stretch") for f in frames],
+                      "C_upstream": [method_c(f)[0] for f in frames]}
+        stability[burst] = {"frames": len(frames), **{k: flicker(v) for k, v in per_method.items()}}
+        print(f"burst {burst}: " + " | ".join(f"{k} flicker {v['mean_abs_frame_diff']:.4f}"
+                                             for k, v in stability[burst].items() if k != "frames"))
+        save_side_by_side(PANEL_DIR / f"burst_{burst}.png",
+                          [frames[0]] + [render_depth(per_method[k][0]) for k in per_method], height=300)
+
     webcam_rgb = images[1][3]
     tensor_a, _ = pp.preprocess(webcam_rgb, "letterbox")
     tensor_c = torch.from_numpy(upstream_transform({"image": webcam_rgb.astype(np.float64) / 255.0})["image"]).unsqueeze(0)
@@ -179,8 +262,10 @@ def main() -> int:
 
     summary = {}
     for key in ("A_letterbox_vs_C_upstream", "B_stretch_vs_C_upstream"):
-        for subset in ("upstream_demo", "upstream_demo_cropped_16x9"):
+        for subset in ("upstream_demo", "upstream_demo_cropped_16x9", "local_frame"):
             sel = [r[key] for r in rows if r["kind"] == subset]
+            if not sel:
+                continue
             summary[f"{key}/{subset}"] = {m: float(np.mean([s[m] for s in sel])) for m in sel[0]}
     results = {
         "description": "Agreement between preprocessing methods; C (official upstream) is a reference "
@@ -192,6 +277,8 @@ def main() -> int:
                  "bilinear align_corners=True upsample",
         },
         "mean_by_subset": summary,
+        "decision_rule": decision_rule(rows),
+        "temporal_stability": stability,
         "images": rows,
         "latency": lat,
         "environment": {"python": platform.python_version(), "torch": torch.__version__,
@@ -199,6 +286,7 @@ def main() -> int:
     }
     RESULTS_PATH.write_text(json.dumps(results, indent=2) + "\n")
     print(json.dumps(summary, indent=1))
+    print("decision rule (numeric part):", json.dumps(results["decision_rule"], indent=1))
     print(f"wrote {RESULTS_PATH.relative_to(ROOT)}; panels in {PANEL_DIR.relative_to(ROOT)}/ "
           "(source | A letterbox | B stretch | C upstream | |A-C|x4 | |B-C|x4)")
     return 0
