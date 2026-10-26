@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <optional>
 #include <string_view>
 #include <thread>
 
@@ -45,7 +46,12 @@ constexpr char kUsage[] =
     "                            waits for a drawable) or the CAMetalLayer surface (fallback)\n"
     "  --trace                   log the phases of render-loop iterations slower than 50 ms\n"
     "  --occlusion-test          cover/uncover each window on a schedule, then check that the\n"
-    "                            loop never stalled and the output kept updating (exit 0/1)\n";
+    "                            loop never stalled and the output kept updating (exit 0/1)\n"
+    "  --save-frames <N>         camera only, off by default: save N camera frames (1-60) as\n"
+    "                            lossless RGB PPM for local tests, then quit. Frames stay local.\n"
+    "  --save-interval <S>       seconds between saved frames (default 1; 0 = consecutive frames)\n"
+    "  --save-delay <S>          seconds to wait before the first saved frame (default 5)\n"
+    "  --save-dir <path>         where to save (default: third_party/assets/local_frames, git-ignored)\n";
 
 using Clock = std::chrono::steady_clock;
 
@@ -68,6 +74,9 @@ struct VideoPipeline {
     if (!uploader.Upload(*frame)) {
       ++rejected;
       return false;
+    }
+    if (saver != nullptr) {
+      saver->Offer(*frame, std::chrono::steady_clock::now());
     }
     compositor.Compose(uploader.camera_texture());
     showing_video = true;
@@ -94,6 +103,7 @@ struct VideoPipeline {
   std::uint64_t composed = 0;
   std::uint64_t rejected = 0;
   bool showing_video = false;
+  FrameSaver* saver = nullptr;  // only with --save-frames
 };
 
 bool ParseSize(std::string_view text, std::uint32_t& width, std::uint32_t& height) {
@@ -760,6 +770,18 @@ int RunWindowed(const AppOptions& options) {
   ArrangeSideBySide(controls.window(), output.window());
   output.Show();
 
+  std::optional<FrameSaver> saver;
+  if (options.save.count > 0) {
+    saver.emplace(options.save);
+    if (!saver->error().empty()) {
+      std::fprintf(stderr, "FAIL: --save-frames: %s\n", saver->error().c_str());
+      return 1;
+    }
+    std::printf("Saving %u camera frames to %s (interval %.2f s, first after %.1f s); nothing leaves this Mac\n",
+                options.save.count, options.save.directory.c_str(), options.save.interval_s, options.save.delay_s);
+    pipeline.saver = &*saver;
+  }
+
   CameraEventQueue events;
   LatestFrameSlot slot;
   CaptureController capture(options, events, slot);
@@ -893,11 +915,26 @@ int RunWindowed(const AppOptions& options) {
     if (options.frames != 0 && pipeline.composed >= options.frames) {
       break;
     }
+    if (saver && saver->done()) {
+      break;
+    }
     if (options.seconds > 0.0 && Seconds(now - run_start) >= options.seconds) {
       break;
     }
   }
   capture.StopSource();
+  if (saver) {
+    pipeline.saver = nullptr;
+    for (const std::string& path : saver->paths()) {
+      std::printf("Saved %s\n", path.c_str());
+    }
+    std::printf("Saved %u of %u frames (%u failed, %u skipped while the writer was busy)%s%s\n", saver->written(),
+                options.save.count, saver->failed(), saver->skipped_busy(), saver->error().empty() ? "" : "; last error: ",
+                saver->error().c_str());
+    if (saver->written() < options.save.count) {
+      exit_code = 1;
+    }
+  }
   gpu->WaitIdle();
   if (gpu->errors().count() != 0) {
     std::fprintf(stderr, "%u WebGPU errors during the run; last: %s\n", gpu->errors().count(),
@@ -969,6 +1006,7 @@ int RunWindowed(const AppOptions& options) {
 
 std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error) {
   AppOptions options;
+  options.save.directory = RELUME_DEFAULT_FRAME_DIR;
   bool pixel_format_set = false;
   for (int i = 1; i < argc; ++i) {
     const std::string_view arg = argv[i];
@@ -1061,6 +1099,31 @@ std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error
         return std::nullopt;
       }
       options.stats_interval_s = s;
+    } else if (arg == "--save-frames") {
+      const char* v = value();
+      char* end = nullptr;
+      const unsigned long n = v != nullptr ? std::strtoul(v, &end, 10) : 0;
+      if (v == nullptr || end == v || *end != '\0' || n < 1 || n > FrameSaver::kMaxFrames) {
+        error = "--save-frames needs a number from 1 to " + std::to_string(FrameSaver::kMaxFrames);
+        return std::nullopt;
+      }
+      options.save.count = static_cast<std::uint32_t>(n);
+    } else if (arg == "--save-interval" || arg == "--save-delay") {
+      const char* v = value();
+      char* end = nullptr;
+      const double sec = v != nullptr ? std::strtod(v, &end) : -1.0;
+      if (v == nullptr || end == v || *end != '\0' || !(sec >= 0.0) || sec > 600.0) {
+        error = std::string(arg) + " needs a number of seconds (0-600)";
+        return std::nullopt;
+      }
+      (arg == "--save-interval" ? options.save.interval_s : options.save.delay_s) = sec;
+    } else if (arg == "--save-dir") {
+      const char* v = value();
+      if (v == nullptr || *v == '\0') {
+        error = "--save-dir needs a path";
+        return std::nullopt;
+      }
+      options.save.directory = v;
     } else if (arg.rfind("-psn_", 0) == 0) {
       // Process serial number that older macOS passes to apps launched by Finder.
     } else if (arg == "--help" || arg == "-h") {
@@ -1075,6 +1138,10 @@ std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error
     options.file.format = pixel_format_set ? options.pixel_format : PixelFormat::kBgra8;
   } else if (options.pixel_format == PixelFormat::kRgb8) {
     error = "--pixel-format rgb is only available for the file source";
+    return std::nullopt;
+  }
+  if (options.save.count > 0 && (options.source != AppOptions::Source::kCamera || options.headless)) {
+    error = "--save-frames saves camera frames; it needs --source camera and windows";
     return std::nullopt;
   }
   if (options.headless && options.source != AppOptions::Source::kFile) {

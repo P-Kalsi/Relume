@@ -19,8 +19,8 @@ struct RgbImage {
 // Reads a P6 PPM. On failure returns nullopt and sets `error`.
 std::optional<RgbImage> ReadPpm(const std::string& path, std::string& error);
 
-// Writes a P6 PPM. Used by tests to create fixtures; the app never writes
-// camera frames to disk.
+// Writes a P6 PPM. Used by tests to create fixtures, and by FrameSaver only
+// when the user explicitly asks for frames with --save-frames.
 bool WritePpm(const std::string& path, const RgbImage& image);
 
 // Deterministic, orientation-revealing test pattern:

@@ -2,6 +2,7 @@
 
 #include "app/window.hpp"
 #include "relume/file_source.hpp"
+#include "relume/frame_saver.hpp"
 
 #include <cstdint>
 #include <optional>
@@ -22,6 +23,7 @@ struct AppOptions {
   PresenterKind presenter = PresenterKind::kLayer;  // window presentation path
   bool trace = false;                     // log the phases of slow render-loop iterations
   bool occlusion_test = false;            // cover/uncover the windows on a schedule and check the loop
+  FrameSaverOptions save;                 // --save-frames: off unless save.count > 0 (camera only)
 };
 
 // Parses command-line arguments. Returns nullopt and sets `error` (which may

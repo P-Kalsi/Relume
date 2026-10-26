@@ -1,3 +1,7 @@
+# Threads: relume_core starts std::threads, and DawnConfig.cmake needs the
+# target but does not find it.
+find_package(Threads REQUIRED)
+
 # relume_core: portable C++ with no platform or GPU dependencies.
 add_library(relume_core STATIC
   core/video_frame.cpp
@@ -8,8 +12,10 @@ add_library(relume_core STATIC
   core/app_state.cpp
   core/stats.cpp
   core/event_queue.cpp
-  core/image_io.cpp)
+  core/image_io.cpp
+  core/frame_saver.cpp)
 target_include_directories(relume_core PUBLIC "${PROJECT_SOURCE_DIR}/include")
+target_link_libraries(relume_core PUBLIC Threads::Threads)
 relume_set_warnings(relume_core)
 
 # relume_camera: camera sources. The file source is portable.
@@ -30,7 +36,6 @@ relume_set_warnings(relume_camera)
 
 # relume_render: Dawn/WebGPU upload, compositing and presentation. WGSL
 # sources are embedded into generated headers at build time.
-find_package(Threads REQUIRED)  # DawnConfig.cmake needs it but does not find it
 find_package(Dawn REQUIRED)
 set(_shader_dir "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
 set(_shader_headers)
@@ -77,6 +82,10 @@ if(APPLE)
   relume_codesign(Relume)
 endif()
 target_include_directories(Relume PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+# Default folder for --save-frames (git-ignored). Absolute, because `open`
+# starts the app in /.
+target_compile_definitions(Relume PRIVATE
+  RELUME_DEFAULT_FRAME_DIR="${PROJECT_SOURCE_DIR}/third_party/assets/local_frames")
 target_link_libraries(Relume PRIVATE relume_camera relume_render relume_imgui glfw)
 relume_set_warnings(Relume)
 
