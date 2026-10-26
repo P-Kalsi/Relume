@@ -10,7 +10,15 @@
 // Presenter accepts nothing else, so a window can never show the
 // camera-resolution texture directly. All objects must be created and used on
 // the thread that owns the GpuContext.
+//
+// Depth debug view (Controls window only):
+//   depth tensor --DepthUploader--> depth texture (R32Float, valid region only)
+//                --DepthVisualizer--> DepthDebugTexture (RGBA8, fixed 1280x720,
+//                                     aligned pixel for pixel with OutputTexture)
+// DepthDebugTexture is a different type from OutputTexture, so it can never be
+// handed to Presenter or a window presenter: the Output window stays video only.
 
+#include "relume/preprocess.hpp"
 #include "relume/video_frame.hpp"
 
 #include <webgpu/webgpu_cpp.h>
@@ -162,9 +170,78 @@ class Presenter {
   std::vector<std::pair<wgpu::TextureFormat, wgpu::RenderPipeline>> pipelines_;
 };
 
+// The depth visualization, the same size as OutputTexture and drawn with the
+// same aspect-fit rectangle, so its pixels line up with the output's.
+class DepthDebugTexture {
+ public:
+  static constexpr std::uint32_t kWidth = OutputTexture::kWidth;
+  static constexpr std::uint32_t kHeight = OutputTexture::kHeight;
+  static constexpr wgpu::TextureFormat kFormat = wgpu::TextureFormat::RGBA8Unorm;
+
+  explicit DepthDebugTexture(const GpuContext& gpu);
+  const wgpu::Texture& texture() const { return texture_; }
+  const wgpu::TextureView& view() const { return view_; }
+
+ private:
+  wgpu::Texture texture_;
+  wgpu::TextureView view_;
+};
+
+// Uploads the valid region of a 448x448 depth tensor, [pad_y : pad_y+new_h,
+// pad_x : pad_x+new_w], straight from the tensor: data offset
+// (pad_y * 448 + pad_x) * 4 bytes, 1792 bytes per row, new_h rows. The R32Float
+// texture is reused until the region's size changes. Dawn copies the data
+// during WriteTexture, so the CPU buffer can be reused at once.
+class DepthUploader {
+ public:
+  explicit DepthUploader(const GpuContext& gpu);
+  // Returns false (and uploads nothing) if the transform's region does not
+  // fit in the tensor.
+  bool Upload(const float* depth, const ResizeTransform& transform);
+  const wgpu::Texture& texture() const { return texture_; }
+
+ private:
+  const GpuContext& gpu_;
+  wgpu::Texture texture_;
+};
+
+struct DepthVisParams {
+  float lo = 0.0f;  // display range (2nd-98th percentile of the valid region, smoothed)
+  float hi = 1.0f;
+  bool valid = false;            // false: neutral grey instead of dividing by a zero range
+  float camera_weight = 0.0f;    // 0 = depth only; 0.5 = depth blended over the camera image
+};
+
+// Draws uploaded depth into the DepthDebugTexture, aspect-fit exactly like
+// OutputCompositor draws the camera image (black bars, same FitRect).
+class DepthVisualizer {
+ public:
+  DepthVisualizer(const GpuContext& gpu, const DepthDebugTexture& target);
+  // `transform` describes the uploaded depth; `camera_texture` (the uploader's
+  // camera texture, used for the overlay) must have the transform's source
+  // size.
+  void Draw(const DepthUploader& depth, const ResizeTransform& transform, const DepthVisParams& params,
+            const wgpu::Texture& camera_texture);
+  // "No depth": a black image.
+  void Clear();
+
+ private:
+  const GpuContext& gpu_;
+  const DepthDebugTexture& target_;
+  wgpu::BindGroupLayout layout_;
+  wgpu::RenderPipeline pipeline_;
+  wgpu::Sampler sampler_;
+  wgpu::Buffer params_;
+  wgpu::Texture bound_depth_;
+  wgpu::Texture bound_camera_;
+  wgpu::BindGroup bind_group_;
+};
+
 // Copies an RGBA8/BGRA8 texture back to the CPU as tightly packed 4-byte
 // pixels (in the texture's own channel order). Blocks until done. For tests
 // and the headless smoke run only; the app never reads frames back.
 bool ReadbackTexture(GpuContext& gpu, const wgpu::Texture& texture, std::vector<std::uint8_t>& pixels);
+// The same for an R32Float texture (tests only).
+bool ReadbackFloatTexture(GpuContext& gpu, const wgpu::Texture& texture, std::vector<float>& values);
 
 }  // namespace relume

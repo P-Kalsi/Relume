@@ -64,7 +64,9 @@ constexpr char kUsage[] =
     "  --coreml-units ALL|CPUOnly|CPUAndGPU|CPUAndNeuralEngine  CoreML compute units (default ALL)\n"
     "  --model <path.onnx>       depth model (default: models/depth_anything_v2_small_448.onnx)\n"
     "  --threads <N>             ONNX Runtime CPU threads, 1-16 (default 4)\n"
-    "  --preprocess stretch|letterbox  resize policy (default stretch)\n";
+    "  --preprocess stretch|letterbox  resize policy (default stretch)\n"
+    "  --inference-switch-test   switch CPU -> CoreML -> CPU -> off -> on and 10 rapid changes while\n"
+    "                            measuring the loop; exit 0 only if no iteration exceeds 50 ms\n";
 
 using Clock = std::chrono::steady_clock;
 
@@ -345,6 +347,96 @@ class StatsLogger {
   std::uint64_t last_received_ = 0;
   std::uint64_t last_composed_ = 0;
 };
+
+// The depth debug view (Controls window only): uploads depth that matches
+// the camera image being shown and draws it, aligned with the output, into
+// the DepthDebugTexture. Anything that does not match shows black ("no
+// depth"), never stale or misaligned depth. The display range is the worker's
+// 2nd-98th percentile of the valid region, smoothed across results so the
+// view does not flicker; it restarts when the camera or worker changes.
+class DepthView {
+ public:
+  explicit DepthView(const GpuContext& gpu) : texture(gpu), uploader_(gpu), visualizer_(gpu, texture) {
+    visualizer_.Clear();
+  }
+
+  void Update(const DepthTracker& depth, const VideoPipeline& pipeline, bool overlay) {
+    const DepthResult* result = depth.current();
+    if (depth.Match(pipeline) != DepthMatch::kMatch) {
+      if (showing_) {
+        visualizer_.Clear();
+        showing_ = false;
+      }
+      return;
+    }
+    const bool new_result = result->worker_generation != worker_generation_ || result->sequence != sequence_;
+    if (new_result) {
+      if (result->worker_generation != worker_generation_ || result->camera_generation != camera_generation_) {
+        range_ = {};  // restart smoothing for a new worker or camera
+      }
+      worker_generation_ = result->worker_generation;
+      camera_generation_ = result->camera_generation;
+      sequence_ = result->sequence;
+      uploader_.Upload(result->depth.data(), result->transform);
+      if (result->range.valid) {
+        constexpr float kSmoothing = 0.3f;  // weight of the newest result
+        range_.lo = range_.valid ? range_.lo + kSmoothing * (result->range.lo - range_.lo) : result->range.lo;
+        range_.hi = range_.valid ? range_.hi + kSmoothing * (result->range.hi - range_.hi) : result->range.hi;
+        range_.valid = range_.hi > range_.lo;
+      }
+    }
+    // Redraw for new depth, a new camera frame (the overlay shows it) or an
+    // overlay change.
+    if (new_result || pipeline.composed != composed_ || overlay != overlay_ || !showing_) {
+      DepthVisParams params;
+      params.lo = range_.lo;
+      params.hi = range_.hi;
+      params.valid = range_.valid;
+      params.camera_weight = overlay ? 0.5f : 0.0f;
+      visualizer_.Draw(uploader_, result->transform, params, pipeline.uploader.camera_texture());
+      composed_ = pipeline.composed;
+      overlay_ = overlay;
+      showing_ = true;
+    }
+  }
+
+  DepthDebugTexture texture;
+
+ private:
+  DepthUploader uploader_;
+  DepthVisualizer visualizer_;
+  DisplayRange range_;
+  std::uint64_t worker_generation_ = 0;
+  std::uint64_t camera_generation_ = 0;
+  std::uint64_t sequence_ = 0;
+  std::uint64_t composed_ = 0;
+  bool overlay_ = false;
+  bool showing_ = false;
+};
+
+// A label that never presents old depth as current: "in sync" only when the
+// depth's frame is the one being shown.
+std::string DepthLabel(const DepthTracker& depth, const VideoPipeline& pipeline, Clock::time_point now) {
+  const DepthResult* result = depth.current();
+  const DepthMatch match = depth.Match(pipeline);
+  if (result == nullptr) {
+    return "No depth yet";
+  }
+  if (match != DepthMatch::kMatch) {
+    return std::string("No depth for this image (") + ToString(match).data() + ")";
+  }
+  const double age_ms = std::chrono::duration<double, std::milli>(now - result->arrival_time).count();
+  const std::uint64_t lag = depth.Lag(pipeline);
+  char text[128];
+  if (lag == 0) {
+    std::snprintf(text, sizeof(text), "In sync with the shown frame (frame %llu, %.0f ms old)",
+                  static_cast<unsigned long long>(result->frame_id), age_ms);
+  } else {
+    std::snprintf(text, sizeof(text), "Depth from %llu frame%s ago (%.0f ms old)", static_cast<unsigned long long>(lag),
+                  lag == 1 ? "" : "s", age_ms);
+  }
+  return text;
+}
 
 // --- Headless self-check ---
 
@@ -945,6 +1037,7 @@ int RunWindowed(const AppOptions& options) {
   }
   std::printf("GPU: %s\n", gpu->adapter_name().c_str());
   VideoPipeline pipeline(*gpu);
+  DepthView depth_view(*gpu);
   ControlWindow controls(*gpu, pipeline.output, options.presenter);
   CleanWindow output(*gpu, options.presenter);
   if (!controls.ok() || !output.ok()) {
@@ -992,8 +1085,19 @@ int RunWindowed(const AppOptions& options) {
   LatestDepthSlot depth_slot;
   InferenceController inference(MakeOnnxDepthEstimator, slot, depth_slot);
   DepthTracker depth(options.preprocess);
-  inference.Request(InferenceConfig(options));
+  AppOptions inference_options = options;  // changed by the Controls window's inference choice
+  inference.Request(InferenceConfig(inference_options));
   InferenceStatus inference_status;
+  bool depth_overlay = false;
+  const auto choice_index = [](const AppOptions& o) {
+    for (int i = 0; i < static_cast<int>(std::size(kInferenceChoices)); ++i) {
+      const InferenceChoice& c = kInferenceChoices[i];
+      if (c.provider == o.inference && (o.inference != ExecutionProvider::kCoreML || c.units == o.coreml_units)) {
+        return i;
+      }
+    }
+    return 0;
+  };
 
   StatsLogger stats(options.stats_interval_s);
   CaptureStatus status;
@@ -1027,6 +1131,29 @@ int RunWindowed(const AppOptions& options) {
   // all of its frames, and no loop iteration takes over 50 ms while a shot is
   // being captured or written (the loop never waits for the disk).
   enum class SelfTest : std::uint8_t { kIdle, kStill, kBurst, kDone } self_test = SelfTest::kIdle;
+  // --inference-switch-test: each step is requested once the previous one
+  // has settled (Ready, CPU fallback or Off). Criteria (fixed in advance):
+  // every step settles within 120 s, no loop iteration takes over 50 ms after
+  // the first 2 s, and every worker is joined at the end.
+  struct SwitchStep {
+    const char* name;
+    std::optional<ExecutionProvider> provider;
+    CoreMLUnits units;
+    int rapid;  // extra rapid requests before this one (coalescing)
+  };
+  static constexpr SwitchStep kSwitchSteps[] = {
+      {"CPU -> CoreML ALL", ExecutionProvider::kCoreML, CoreMLUnits::kAll, 0},
+      {"CoreML -> CPU", ExecutionProvider::kCpu, CoreMLUnits::kAll, 0},
+      {"CPU -> off", std::nullopt, CoreMLUnits::kAll, 0},
+      {"off -> CPU", ExecutionProvider::kCpu, CoreMLUnits::kAll, 0},
+      {"10 rapid changes, ending on CPU", ExecutionProvider::kCpu, CoreMLUnits::kAll, 10},
+  };
+  std::size_t switch_step = 0;
+  Clock::time_point switch_requested{};
+  Clock::time_point switch_settled = run_start;
+  double switch_max_iteration_ms = 0.0;  // max of start-to-start and end-to-end iteration intervals
+  Clock::time_point last_iteration_end{};
+  bool switch_failed = false;
   double self_test_max_iteration_ms = 0.0;
   bool self_test_failed = false;
   while (!controls.should_close()) {
@@ -1087,6 +1214,7 @@ int RunWindowed(const AppOptions& options) {
       std::fflush(stdout);
     }
     inference_status = next_inference;
+    depth_view.Update(depth, pipeline, depth_overlay);
     trace.Mark("compose");
     output.Render(pipeline.presenter);
     trace.Mark("output");
@@ -1100,6 +1228,20 @@ int RunWindowed(const AppOptions& options) {
     model.status = status;
     model.output_visible = output.visible();
     capture.FillModel(model);
+    model.inference = inference_status;
+    model.inference_choice = choice_index(inference_options);
+    model.depth_view = &depth_view.texture;
+    model.depth_overlay = depth_overlay;
+    if (inference.active() != nullptr) {
+      model.depth_label = DepthLabel(depth, pipeline, Clock::now());
+      const DepthWorker& worker = *inference.active();
+      if (worker.run_ms.count() > 0) {
+        char timing[96];
+        std::snprintf(timing, sizeof(timing), "run p50 %.0f ms, p95 %.0f ms (since the last stats line)",
+                      worker.run_ms.Percentile(0.5), worker.run_ms.Percentile(0.95));
+        model.inference_timing = timing;
+      }
+    }
     const ControlsActions actions = controls.Render(model);
     trace.Mark("controls");
     if (guided && actions.guided_select) {
@@ -1111,6 +1253,16 @@ int RunWindowed(const AppOptions& options) {
     }
     if (actions.toggle_output) {
       output.visible() ? output.Hide() : output.Show();
+    }
+    if (actions.toggle_depth_overlay) {
+      depth_overlay = !depth_overlay;
+    }
+    if (actions.inference_choice) {
+      const InferenceChoice& choice = kInferenceChoices[*actions.inference_choice];
+      inference_options.inference = choice.provider;
+      inference_options.coreml_units = choice.units;
+      std::printf("[inference] requested: %s\n", choice.label);
+      inference.Request(InferenceConfig(inference_options));  // applied by Update(); never waits
     }
     if (guided && options.guided_self_test) {
       if (guided->busy()) {
@@ -1136,6 +1288,51 @@ int RunWindowed(const AppOptions& options) {
       if (t > 30.0) {
         std::fprintf(stderr, "FAIL: guided self-test timed out\n");
         self_test_failed = true;
+        break;
+      }
+    }
+    if (options.inference_switch_test) {
+      if (t >= 2.0) {
+        switch_max_iteration_ms = std::max(
+            switch_max_iteration_ms, std::chrono::duration<double, std::milli>(iteration_start - previous_start).count());
+      }
+      const InferenceState state = inference.status().state;
+      const bool settled = !inference.pending() && !inference.retiring() &&
+                           (state == InferenceState::kReady || state == InferenceState::kCpuFallback ||
+                            state == InferenceState::kOff || state == InferenceState::kError);
+      const Clock::time_point now_switch = Clock::now();
+      if (switch_requested != Clock::time_point{} && settled) {
+        std::printf("[switch-test] %s: settled as '%s' after %.0f ms\n", kSwitchSteps[switch_step - 1].name,
+                    inference.status().label.c_str(),
+                    std::chrono::duration<double, std::milli>(now_switch - switch_requested).count());
+        switch_requested = {};
+        switch_settled = now_switch;
+        if (state == InferenceState::kError) {
+          switch_failed = true;
+        }
+      }
+      if (switch_requested == Clock::time_point{} && settled && Seconds(now_switch - switch_settled) >= 3.0) {
+        if (switch_step == std::size(kSwitchSteps)) {
+          break;
+        }
+        const SwitchStep& step = kSwitchSteps[switch_step++];
+        for (int i = 0; i < step.rapid; ++i) {
+          inference_options.inference = i % 2 == 0 ? ExecutionProvider::kCoreML : ExecutionProvider::kCpu;
+          inference_options.threads = 2 + i % 3;
+          inference.Request(InferenceConfig(inference_options));
+          inference.Update();
+        }
+        inference_options.inference = step.provider;
+        inference_options.coreml_units = step.units;
+        inference_options.threads = options.threads;
+        inference.Request(InferenceConfig(inference_options));
+        switch_requested = now_switch;
+        std::printf("[switch-test] t=%.1fs requesting: %s\n", t, step.name);
+        std::fflush(stdout);
+      }
+      if (switch_requested != Clock::time_point{} && Seconds(now_switch - switch_requested) > 120.0) {
+        std::fprintf(stderr, "FAIL: %s did not settle within 120 s\n", kSwitchSteps[switch_step - 1].name);
+        switch_failed = true;
         break;
       }
     }
@@ -1168,6 +1365,12 @@ int RunWindowed(const AppOptions& options) {
     }
 
     const Clock::time_point now = Clock::now();
+    if (options.inference_switch_test && t >= 2.0 && last_iteration_end != Clock::time_point{}) {
+      // The stats log's measure (end to end), in addition to start to start.
+      switch_max_iteration_ms =
+          std::max(switch_max_iteration_ms, std::chrono::duration<double, std::milli>(now - last_iteration_end).count());
+    }
+    last_iteration_end = now;
     stats.OnRender(now);
     stats.Maybe(now, capture.source(), slot, pipeline, output.presenter(), controls.presenter(), &inference, &depth,
                 &depth_slot);
@@ -1193,8 +1396,25 @@ int RunWindowed(const AppOptions& options) {
   pipeline.on_frame = nullptr;
   glfwHideWindow(output.window());
   glfwHideWindow(controls.window());
-  std::printf("Inference shutdown: %llu workers started, joined in %.1f ms\n",
-              static_cast<unsigned long long>(inference.workers_started()), inference.Shutdown());
+  const double shutdown_ms = inference.Shutdown();
+  std::printf("Inference shutdown: %llu workers started, %llu joined; final join took %.1f ms\n",
+              static_cast<unsigned long long>(inference.workers_started()),
+              static_cast<unsigned long long>(inference.workers_joined()), shutdown_ms);
+  if (options.inference_switch_test) {
+    const bool all_steps = switch_step == std::size(kSwitchSteps) && switch_requested == Clock::time_point{};
+    const bool joined = inference.workers_joined() == inference.workers_started();
+    const bool timing_ok = switch_max_iteration_ms <= 50.0;
+    std::printf("Inference switch test: %zu of %zu steps settled, workers started %llu joined %llu, max iteration "
+                "%.1f ms (limit 50)\n",
+                switch_step - (switch_requested == Clock::time_point{} ? 0 : 1), std::size(kSwitchSteps),
+                static_cast<unsigned long long>(inference.workers_started()),
+                static_cast<unsigned long long>(inference.workers_joined()), switch_max_iteration_ms);
+    const bool pass = !switch_failed && all_steps && joined && timing_ok;
+    std::printf(pass ? "INFERENCE SWITCH TEST PASS\n" : "INFERENCE SWITCH TEST FAIL\n");
+    if (!pass) {
+      exit_code = 1;
+    }
+  }
   if (guided) {
     std::printf("Guided capture: %u of %u stills and %u of %u bursts on disk; %u files written this session\n",
                 guided->saved_stills(), guided->stills_total(), guided->saved_bursts(), guided->bursts_total(),
@@ -1427,6 +1647,8 @@ std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error
         return std::nullopt;
       }
       options.save.directory = v;
+    } else if (arg == "--inference-switch-test") {
+      options.inference_switch_test = true;
     } else if (arg == "--inference") {
       const char* v = value();
       const std::string_view name = v != nullptr ? v : "";
@@ -1519,6 +1741,10 @@ std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error
   // burst writer could not keep up). --inference turns it on explicitly.
   if ((options.headless || options.guided_capture || options.save.count > 0) && !options.inference_set) {
     options.inference = std::nullopt;
+  }
+  if (options.inference_switch_test && (options.headless || !options.inference)) {
+    error = "--inference-switch-test needs windows and inference on";
+    return std::nullopt;
   }
   return options;
 }

@@ -27,6 +27,7 @@ struct AppOptions {
   FrameSaverOptions save;                 // --save-frames: off unless save.count > 0 (camera only)
   bool guided_capture = false;            // --guided-capture: shots taken from the Controls window
   bool guided_self_test = false;          // with --guided-capture --source file: script one still and one burst
+  bool inference_switch_test = false;     // --inference-switch-test: scripted provider changes, loop measured
 
   // Depth inference. Default: CPU. Off for --headless, --guided-capture and
   // --save-frames unless --inference is given (headless then also checks

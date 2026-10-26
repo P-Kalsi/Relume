@@ -54,14 +54,20 @@ relume_set_warnings(relume_camera)
 find_package(Dawn REQUIRED)
 set(_shader_dir "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
 set(_shader_headers)
-foreach(_shader convert blit)
+foreach(_shader convert blit depth_vis)
   set(_input "${PROJECT_SOURCE_DIR}/shaders/${_shader}.wgsl")
   set(_output "${_shader_dir}/${_shader}_wgsl.hpp")
-  string(SUBSTRING "${_shader}" 0 1 _first)
-  string(TOUPPER "${_first}" _first)
-  string(SUBSTRING "${_shader}" 1 -1 _rest)
+  # depth_vis -> kDepthVisWgsl
+  set(_name "k")
+  string(REPLACE "_" ";" _words "${_shader}")
+  foreach(_word IN LISTS _words)
+    string(SUBSTRING "${_word}" 0 1 _first)
+    string(TOUPPER "${_first}" _first)
+    string(SUBSTRING "${_word}" 1 -1 _rest)
+    string(APPEND _name "${_first}${_rest}")
+  endforeach()
   add_custom_command(OUTPUT "${_output}"
-    COMMAND "${CMAKE_COMMAND}" -DINPUT=${_input} -DOUTPUT=${_output} -DNAME=k${_first}${_rest}Wgsl
+    COMMAND "${CMAKE_COMMAND}" -DINPUT=${_input} -DOUTPUT=${_output} -DNAME=${_name}Wgsl
             -P "${PROJECT_SOURCE_DIR}/cmake/EmbedShader.cmake"
     DEPENDS "${_input}" "${PROJECT_SOURCE_DIR}/cmake/EmbedShader.cmake"
     COMMENT "Embedding shaders/${_shader}.wgsl"
@@ -144,10 +150,23 @@ set_tests_properties(app_window_occlusion PROPERTIES TIMEOUT 180 LABELS display)
 
 # Guided capture in the real app with the file source (never the camera, and
 # never the local_frames folder): scripted Capture of one still and one burst.
-# RGB frames, because a Debug build needs about 51 ms to convert a 720p NV12
-# frame, too slow for a 30 fps burst (Release: about 5 ms). Opens windows, so
-# it is in the `display` set too.
+# RGB frames at 640x360: this checks the capture logic and that the loop
+# never waits for the disk, not the writer's throughput. A Debug build needs
+# about 51 ms to convert a 720p NV12 frame, and even 720p RGB passed only 9 of
+# 10 runs (the burst writer barely keeps up); 640x360 passed 10 of 10. Release
+# throughput is checked by hand at 720p NV12 (docs/decisions.md). Opens
+# windows, so it is in the `display` set too.
 add_test(NAME app_guided_capture_self_test
-  COMMAND Relume --source file --pixel-format rgb --guided-capture --guided-self-test --stats 0
+  COMMAND Relume --source file --pattern 640x360 --pixel-format rgb --guided-capture --guided-self-test --stats 0
           --save-dir "${CMAKE_CURRENT_BINARY_DIR}/guided_self_test")
 set_tests_properties(app_guided_capture_self_test PROPERTIES TIMEOUT 60 LABELS display)
+
+# Live provider switching with the real ONNX Runtime (CPU and CoreML), file
+# source: CPU -> CoreML -> CPU -> off -> on, then 10 rapid changes. Fails if a
+# step does not settle, a worker is not joined, or any loop iteration takes
+# over 50 ms. Opens windows; the first CoreML compile can take a while.
+if(EXISTS "${PROJECT_SOURCE_DIR}/models/depth_anything_v2_small_448.onnx")
+  add_test(NAME app_inference_switch_test
+    COMMAND Relume --source file --pixel-format nv12 --inference cpu --inference-switch-test --stats 5)
+  set_tests_properties(app_inference_switch_test PROPERTIES TIMEOUT 600 LABELS display)
+endif()

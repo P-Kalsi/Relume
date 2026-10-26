@@ -32,6 +32,30 @@ ImVec4 StatusColor(CaptureState state) {
   return {1.0f, 1.0f, 1.0f, 1.0f};
 }
 
+ImVec4 InferenceColor(InferenceState state) {
+  switch (state) {
+    case InferenceState::kReady: return {0.35f, 0.85f, 0.45f, 1.0f};
+    case InferenceState::kLoading:
+    case InferenceState::kCpuFallback: return {0.95f, 0.80f, 0.30f, 1.0f};
+    case InferenceState::kError: return {0.95f, 0.40f, 0.35f, 1.0f};
+    case InferenceState::kOff: return {0.6f, 0.6f, 0.6f, 1.0f};
+  }
+  return {1.0f, 1.0f, 1.0f, 1.0f};
+}
+
+// Draws `view` aspect-fit (1280x720) into a `width` x `height` area at the cursor.
+void FittedImage(const wgpu::TextureView& view, float width, float height) {
+  if (width < 1.0f || height < 1.0f) {
+    return;
+  }
+  const PixelRect fit = FitRect(OutputTexture::kWidth, OutputTexture::kHeight, static_cast<std::uint32_t>(width),
+                                static_cast<std::uint32_t>(height));
+  const ImVec2 cursor = ImGui::GetCursorPos();
+  ImGui::SetCursorPos({cursor.x + static_cast<float>(fit.x), cursor.y + static_cast<float>(fit.y)});
+  ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(view.Get())),
+               {static_cast<float>(fit.width), static_cast<float>(fit.height)});
+}
+
 std::string DeviceLabel(const CameraDeviceInfo& device) {
   return device.is_virtual ? device.name + "  (virtual camera)" : device.name;
 }
@@ -160,20 +184,61 @@ ControlsActions ControlWindow::BuildUi(const ControlsModel& model) {
   if (model.guided != nullptr) {
     BuildGuidedCapture(*model.guided, model.now, actions);
   }
+  BuildInference(model, actions);
 
-  // Preview of the clean output, aspect-fit into the remaining space.
+  // Preview of the clean output and, beside it, the depth view, each
+  // aspect-fit into half of the remaining space.
   ImGui::Separator();
   const ImVec2 avail = ImGui::GetContentRegionAvail();
-  if (avail.x >= 1.0f && avail.y >= 1.0f) {
-    const PixelRect fit = FitRect(OutputTexture::kWidth, OutputTexture::kHeight, static_cast<std::uint32_t>(avail.x),
-                                  static_cast<std::uint32_t>(avail.y));
-    const ImVec2 cursor = ImGui::GetCursorPos();
-    ImGui::SetCursorPos({cursor.x + static_cast<float>(fit.x), cursor.y + static_cast<float>(fit.y)});
-    ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(output_.view().Get())),
-                 {static_cast<float>(fit.width), static_cast<float>(fit.height)});
+  if (model.depth_view == nullptr) {
+    FittedImage(output_.view(), avail.x, avail.y);
+  } else {
+    const float spacing = ImGui::GetStyle().ItemSpacing.x;
+    const float half = (avail.x - spacing) / 2.0f;
+    const float label_height = ImGui::GetTextLineHeightWithSpacing();
+    const ImVec2 start = ImGui::GetCursorPos();
+    ImGui::TextDisabled("Output (camera passthrough)");
+    FittedImage(output_.view(), half, avail.y - label_height);
+    ImGui::SetCursorPos({start.x + half + spacing, start.y});
+    ImGui::TextDisabled(model.depth_overlay ? "Depth over camera (brighter = nearer)" : "Depth (brighter = nearer)");
+    ImGui::SetCursorPos({start.x + half + spacing, start.y + label_height});
+    FittedImage(model.depth_view->view(), half, avail.y - label_height);
   }
   ImGui::End();
   return actions;
+}
+
+// Inference status and settings. The depth label always says how old the
+// depth is; it never implies frame-exact sync unless the lag is 0.
+void ControlWindow::BuildInference(const ControlsModel& model, ControlsActions& actions) {
+  ImGui::Separator();
+  ImGui::TextUnformatted("Depth:");
+  ImGui::SameLine();
+  ImGui::TextColored(InferenceColor(model.inference.state), "%s", model.inference.label.c_str());
+  ImGui::SameLine();
+  ImGui::TextWrapped("%s", model.inference.detail.c_str());
+  ImGui::SetNextItemWidth(260.0f);
+  const int current = std::clamp(model.inference_choice, 0, static_cast<int>(std::size(kInferenceChoices)) - 1);
+  if (ImGui::BeginCombo("Inference", kInferenceChoices[current].label)) {
+    for (int i = 0; i < static_cast<int>(std::size(kInferenceChoices)); ++i) {
+      if (ImGui::Selectable(kInferenceChoices[i].label, i == current) && i != current) {
+        actions.inference_choice = i;
+      }
+    }
+    ImGui::EndCombo();
+  }
+  ImGui::SameLine();
+  bool overlay = model.depth_overlay;
+  if (ImGui::Checkbox("Overlay on camera", &overlay)) {
+    actions.toggle_depth_overlay = true;
+  }
+  if (!model.depth_label.empty()) {
+    ImGui::TextDisabled("%s", model.depth_label.c_str());
+  }
+  if (!model.inference_timing.empty()) {
+    ImGui::SameLine();
+    ImGui::TextDisabled("|  %s", model.inference_timing.c_str());
+  }
 }
 
 // Guided capture: instructions, countdown and progress for local test shots.

@@ -1,14 +1,16 @@
 #pragma once
 
-// "Relume Controls": the window for the person running Relume. Phase 2 UI is
-// deliberately minimal: camera selection, capture/permission status, an
-// Output window toggle and a preview of the OutputTexture (the same texture
-// the Output window shows). ImGui draws only into this window.
+// "Relume Controls": the window for the person running Relume: camera
+// selection, capture/permission status, an Output window toggle, a preview of
+// the OutputTexture (the same texture the Output window shows) and, beside
+// it, the depth debug view with the inference status and settings. ImGui
+// draws only into this window.
 
 #include "app/window.hpp"
 #include "relume/app_state.hpp"
 #include "relume/camera.hpp"
 #include "relume/guided_capture.hpp"
+#include "relume/inference_controller.hpp"
 #include "relume/renderer.hpp"
 
 #include <optional>
@@ -28,6 +30,29 @@ struct ControlsModel {
   bool output_visible = true;
   const GuidedCapture* guided = nullptr;  // --guided-capture only
   GuidedCapture::Clock::time_point now{};  // for the guided-capture countdown
+
+  // Depth inference.
+  InferenceStatus inference;
+  int inference_choice = 0;                 // index into kInferenceChoices
+  std::string depth_label;                  // age and lag of the depth shown, or why there is none
+  std::string inference_timing;             // e.g. "run p50 330 ms, p95 341 ms"
+  const DepthDebugTexture* depth_view = nullptr;
+  bool depth_overlay = false;
+};
+
+// The inference settings offered in the Controls window.
+struct InferenceChoice {
+  const char* label;
+  std::optional<ExecutionProvider> provider;  // nullopt = off
+  CoreMLUnits units;
+};
+inline constexpr InferenceChoice kInferenceChoices[] = {
+    {"Off", std::nullopt, CoreMLUnits::kAll},
+    {"CPU", ExecutionProvider::kCpu, CoreMLUnits::kAll},
+    {"CoreML: ALL", ExecutionProvider::kCoreML, CoreMLUnits::kAll},
+    {"CoreML: CPU and Neural Engine", ExecutionProvider::kCoreML, CoreMLUnits::kCPUAndNeuralEngine},
+    {"CoreML: CPU and GPU", ExecutionProvider::kCoreML, CoreMLUnits::kCPUAndGPU},
+    {"CoreML: CPU only", ExecutionProvider::kCoreML, CoreMLUnits::kCPUOnly},
 };
 
 // What the user asked for this frame.
@@ -36,6 +61,8 @@ struct ControlsActions {
   bool toggle_output = false;
   std::optional<std::size_t> guided_select;  // move to another shot
   bool guided_capture = false;               // Capture / Retake / Start burst
+  std::optional<int> inference_choice;       // a new entry of kInferenceChoices
+  bool toggle_depth_overlay = false;
 };
 
 class ControlWindow {
@@ -65,6 +92,7 @@ class ControlWindow {
   ControlsActions BuildUi(const ControlsModel& model);
   void BuildGuidedCapture(const GuidedCapture& guided, GuidedCapture::Clock::time_point now,
                           ControlsActions& actions);
+  void BuildInference(const ControlsModel& model, ControlsActions& actions);
 
   const GpuContext& gpu_;
   const OutputTexture& output_;

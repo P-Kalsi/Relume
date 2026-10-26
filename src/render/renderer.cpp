@@ -3,6 +3,7 @@
 #include "relume/layout.hpp"
 #include "shaders/blit_wgsl.hpp"
 #include "shaders/convert_wgsl.hpp"
+#include "shaders/depth_vis_wgsl.hpp"
 
 #include <array>
 #include <cstdio>
@@ -444,9 +445,106 @@ void Presenter::Present(const wgpu::TextureView& target, wgpu::TextureFormat tar
   EncodeFitPass(gpu_, target, &PipelineFor(target_format), &bind_group_, rect);
 }
 
+// --- Depth debug view ---
+
+DepthDebugTexture::DepthDebugTexture(const GpuContext& gpu)
+    : texture_(CreateTexture(gpu.device(), kWidth, kHeight, kFormat,
+                             wgpu::TextureUsage::RenderAttachment | wgpu::TextureUsage::TextureBinding |
+                                 wgpu::TextureUsage::CopySrc,
+                             "relume depth debug view")),
+      view_(texture_.CreateView()) {}
+
+DepthUploader::DepthUploader(const GpuContext& gpu) : gpu_(gpu) {}
+
+bool DepthUploader::Upload(const float* depth, const ResizeTransform& t) {
+  if (depth == nullptr || t.new_w == 0 || t.new_h == 0 || t.pad_x + t.new_w > kNetSize ||
+      t.pad_y + t.new_h > kNetSize) {
+    return false;
+  }
+  if (!texture_ || texture_.GetWidth() != t.new_w || texture_.GetHeight() != t.new_h) {
+    texture_ = CreateTexture(gpu_.device(), t.new_w, t.new_h, wgpu::TextureFormat::R32Float,
+                             wgpu::TextureUsage::TextureBinding | wgpu::TextureUsage::CopyDst |
+                                 wgpu::TextureUsage::CopySrc,
+                             "relume depth");
+  }
+  wgpu::TexelCopyTextureInfo destination{};
+  destination.texture = texture_;
+  wgpu::TexelCopyBufferLayout layout{};
+  layout.offset = (std::uint64_t{t.pad_y} * kNetSize + t.pad_x) * sizeof(float);
+  layout.bytesPerRow = kNetSize * sizeof(float);  // 1792, the full tensor row
+  layout.rowsPerImage = t.new_h;
+  const wgpu::Extent3D size = {t.new_w, t.new_h, 1};
+  gpu_.queue().WriteTexture(&destination, depth, kNetDepthFloats * sizeof(float), &layout, &size);
+  return true;
+}
+
+DepthVisualizer::DepthVisualizer(const GpuContext& gpu, const DepthDebugTexture& target) : gpu_(gpu), target_(target) {
+  const wgpu::Device& device = gpu.device();
+  std::array<wgpu::BindGroupLayoutEntry, 4> entries = {
+      TextureEntry(0, wgpu::TextureSampleType::UnfilterableFloat), wgpu::BindGroupLayoutEntry{},
+      wgpu::BindGroupLayoutEntry{}, TextureEntry(3, wgpu::TextureSampleType::Float)};
+  entries[1].binding = 1;
+  entries[1].visibility = wgpu::ShaderStage::Fragment;
+  entries[1].buffer.type = wgpu::BufferBindingType::Uniform;
+  entries[2].binding = 2;
+  entries[2].visibility = wgpu::ShaderStage::Fragment;
+  entries[2].sampler.type = wgpu::SamplerBindingType::Filtering;
+  layout_ = CreateLayout(device, entries);
+  pipeline_ = CreatePipeline(device, layout_, CreateShader(device, kDepthVisWgsl, "relume depth view"), "vs_main",
+                             "fs_main", DepthDebugTexture::kFormat);
+  sampler_ = CreateLinearSampler(device);
+  wgpu::BufferDescriptor params_desc{};
+  params_desc.size = 64;
+  params_desc.usage = wgpu::BufferUsage::Uniform | wgpu::BufferUsage::CopyDst;
+  params_ = device.CreateBuffer(&params_desc);
+}
+
+void DepthVisualizer::Draw(const DepthUploader& depth, const ResizeTransform& t, const DepthVisParams& params,
+                           const wgpu::Texture& camera_texture) {
+  if (!depth.texture() || !camera_texture || depth.texture().GetWidth() != t.new_w ||
+      depth.texture().GetHeight() != t.new_h) {
+    Clear();
+    return;
+  }
+  if (bound_depth_.Get() != depth.texture().Get() || bound_camera_.Get() != camera_texture.Get()) {
+    bound_depth_ = depth.texture();
+    bound_camera_ = camera_texture;
+    std::array<wgpu::BindGroupEntry, 4> entries{};
+    entries[0].binding = 0;
+    entries[0].textureView = bound_depth_.CreateView();
+    entries[1].binding = 1;
+    entries[1].buffer = params_;
+    entries[1].size = 64;
+    entries[2].binding = 2;
+    entries[2].sampler = sampler_;
+    entries[3].binding = 3;
+    entries[3].textureView = bound_camera_.CreateView();
+    wgpu::BindGroupDescriptor desc{};
+    desc.layout = layout_;
+    desc.entryCount = entries.size();
+    desc.entries = entries.data();
+    bind_group_ = gpu_.device().CreateBindGroup(&desc);
+  }
+  const PixelRect rect = FitRect(t.src_w, t.src_h, DepthDebugTexture::kWidth, DepthDebugTexture::kHeight);
+  // Matches Params in shaders/depth_vis.wgsl.
+  const std::array<float, 16> values = {
+      static_cast<float>(rect.x), static_cast<float>(rect.y), static_cast<float>(rect.width),
+      static_cast<float>(rect.height), static_cast<float>(t.src_w), static_cast<float>(t.src_h),
+      static_cast<float>(t.sx()), static_cast<float>(t.sy()), static_cast<float>(t.new_w),
+      static_cast<float>(t.new_h), params.lo, params.hi, params.valid ? 1.0f : 0.0f, params.camera_weight,
+      0.0f, 0.0f};
+  gpu_.queue().WriteBuffer(params_, 0, values.data(), sizeof(values));
+  EncodeFitPass(gpu_, target_.view(), &pipeline_, &bind_group_, rect);
+}
+
+void DepthVisualizer::Clear() { EncodeFitPass(gpu_, target_.view(), nullptr, nullptr, {}); }
+
 // --- Readback ---
 
-bool ReadbackTexture(GpuContext& gpu, const wgpu::Texture& texture, std::vector<std::uint8_t>& pixels) {
+namespace {
+
+// Copies `texture` (4 bytes per texel) into `out` as tightly packed rows.
+bool ReadbackBytes(GpuContext& gpu, const wgpu::Texture& texture, std::vector<std::uint8_t>& out) {
   const std::uint32_t width = texture.GetWidth();
   const std::uint32_t height = texture.GetHeight();
   const std::uint32_t row_bytes = width * 4;
@@ -479,11 +577,27 @@ bool ReadbackTexture(GpuContext& gpu, const wgpu::Texture& texture, std::vector<
     return false;
   }
   const auto* data = static_cast<const std::uint8_t*>(buffer.GetConstMappedRange(0, buffer_desc.size));
-  pixels.resize(std::size_t{row_bytes} * height);
+  out.resize(std::size_t{row_bytes} * height);
   for (std::uint32_t y = 0; y < height; ++y) {
-    std::memcpy(pixels.data() + std::size_t{y} * row_bytes, data + std::size_t{y} * padded_row, row_bytes);
+    std::memcpy(out.data() + std::size_t{y} * row_bytes, data + std::size_t{y} * padded_row, row_bytes);
   }
   buffer.Unmap();
+  return true;
+}
+
+}  // namespace
+
+bool ReadbackTexture(GpuContext& gpu, const wgpu::Texture& texture, std::vector<std::uint8_t>& pixels) {
+  return ReadbackBytes(gpu, texture, pixels);
+}
+
+bool ReadbackFloatTexture(GpuContext& gpu, const wgpu::Texture& texture, std::vector<float>& values) {
+  std::vector<std::uint8_t> bytes;
+  if (texture.GetFormat() != wgpu::TextureFormat::R32Float || !ReadbackBytes(gpu, texture, bytes)) {
+    return false;
+  }
+  values.resize(bytes.size() / sizeof(float));
+  std::memcpy(values.data(), bytes.data(), bytes.size());
   return true;
 }
 

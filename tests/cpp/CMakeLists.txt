@@ -29,3 +29,4 @@ relume_add_gtest(test_onnx_depth SOURCES test_onnx_depth.cpp LIBS relume_inferen
 target_compile_definitions(test_onnx_depth PRIVATE
   RELUME_TEST_MODEL="${PROJECT_SOURCE_DIR}/models/depth_anything_v2_small_448.onnx")
 relume_add_gtest(test_depth_worker SOURCES test_depth_worker.cpp LIBS relume_core)
+relume_add_gtest(test_depth_vis SOURCES test_depth_vis.cpp LIBS relume_render)

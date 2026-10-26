@@ -408,6 +408,51 @@ Output window is resized and minimized, on a fixed schedule).
   test passes with CPU inference running: 30.0 fps composed and max iteration
   17.7 ms in every judged phase (unchanged from Phase 2).
 
+### Depth alignment and the debug view (Step 6)
+
+- **Upload:** `DepthUploader` writes only the valid region straight from the
+  448×448 tensor: data offset `(pad_y·448 + pad_x)·4`, `bytesPerRow` 1792,
+  `rowsPerImage` new_h, extent new_w × new_h, into an R32Float texture reused
+  until the size changes. A distinct value in every tensor cell reads back
+  exactly for 16:9 and portrait letterbox, 4:3 and stretch.
+- **Visualization:** `shaders/depth_vis.wgsl` draws into a fixed 1280×720
+  `DepthDebugTexture` with the same `FitRect` as the camera image, so depth
+  pixels line up with `OutputTexture` pixels. Resampling is manual bilinear
+  (`textureLoad`) with `DepthToSource`'s half-pixel convention; no
+  float32-filterable feature is needed. Display range: the worker's 2nd–98th
+  percentile of the valid region, smoothed across results (weight 0.3),
+  restarted for a new camera or worker. An unusable range shows neutral grey;
+  no matching depth shows black.
+- **GPU tests (criteria fixed in advance, all met):** GPU vs CPU reference
+  within ±1 per channel for 16:9, portrait and 4:3 (pillarboxed) sources under
+  letterbox and stretch; a depth step lands on the expected output pixel
+  (±1); the overlay at full camera weight equals the composed output exactly.
+- **Output contract:** `DepthDebugTexture` is its own type; `Presenter` and the
+  window presenters accept only `OutputTexture`. The Output window stays
+  camera passthrough.
+- **Controls window:** the output preview with the depth view beside it, an
+  overlay toggle (depth blended 50% over the camera), the inference status, a
+  provider choice (Off, CPU, CoreML with each compute-unit setting), run
+  latency, and a depth label that gives the depth's age and frame lag ("in
+  sync" only at lag 0).
+- **Live provider switching** (`app_inference_switch_test`, file source, real
+  ONNX Runtime; criteria fixed in advance: every step settles, every worker is
+  joined, no iteration over 50 ms): PASS. CPU → CoreML ALL settled in 58–62 s
+  (CoreML compiles the model; no compile cache yet), CoreML → CPU 850–930 ms,
+  off 33–84 ms, off → CPU 750–770 ms, 10 rapid changes coalesced into one new
+  worker. Max loop iteration 31–32 ms, measured end to end like the stats log;
+  measured start to start only, it read 17.7 ms, which hid this. The
+  30 ms iterations happen while CoreML compiles. 60 fps loop and 30 fps
+  composed throughout.
+- **Live file-source run (Release, CPU):** 3.2 depth results/s, run p50
+  300 ms, depth age p50 330 ms, lag p50 9 frames; render loop p95 16.9 ms.
+- **Guided self-test CTest now uses 640×360 frames.** In Debug at 720p RGB
+  it passed 9 of 10 runs: the burst writer barely keeps up even with
+  inference off, so this was already marginal before Phase 3. At 640×360 it
+  passed 10 of 10. The test checks the capture logic and that the loop never
+  waits; Release throughput at 720p NV12 is checked by hand (6 of 6 with CPU
+  inference running, 0 frames skipped).
+
 ### Known limitations (recorded, out of Phase 3 scope)
 
 - **Facial depth is fairly smooth.** In several frames, both letterbox and
