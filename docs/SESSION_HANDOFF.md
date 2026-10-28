@@ -1,15 +1,16 @@
 # Session handoff: end of Phase 3 (2026-10-28)
 
-Phase 3 (native depth inference) is complete and verified, pending the
-developer's acceptance. The next phase is **Phase 4**; do not start it without
-approval. Read `CLAUDE.md`, this file, PRD §8, then `docs/decisions.md`
+Phase 3 (native depth inference) is complete, verified, and **approved by
+the developer on 2026-10-28**. The next phase is **Phase 4**; the developer
+will start it in a fresh session. Do not start it without approval. Read `CLAUDE.md`, this file, PRD §8, then `docs/decisions.md`
 (Phase 3), `docs/architecture.md` and `docs/model.md`.
 
 ## Git state
 - **Branch:** `main`. `origin/main` is at `f501ca9` (pushed with approval on
-  2026-10-25). Everything after it is **local and not pushed** (no push
-  without approval).
-- **Phase 3 commits** (oldest first):
+  2026-10-25). Everything after it is **local and not pushed**; the developer
+  will push the verified commits themselves.
+- **Phase 3 commits** (14 with the final handoff commit; oldest first; the first
+  three are already on `origin/main`):
   - `b64291b` opt-in `--save-frames`; `efc6420` preprocessing comparison on local frames; `f501ca9` guided capture
   - `9d2bf52` stretch selected as the default preprocessing (gate 1)
   - `23ae079` C++ preprocessing (bit-exact with Python)
@@ -29,7 +30,7 @@ approval. Read `CLAUDE.md`, this file, PRD §8, then `docs/decisions.md`
   1.31.0), on a `DepthWorker` thread that never holds a camera frame during a
   run; `InferenceController` switches providers without blocking the main
   thread. Status: Off, Loading, Ready, CPU fallback, Error (passthrough).
-- **Default provider (provisional, approved; camera checks passed):** CoreML
+- **Default provider (approved at gate 2, confirmed 2026-10-28 after the camera checks):** CoreML
   `CPUAndGPU`, falling back to CPU automatically. 481 of 517 nodes run through
   CoreML (36 `Gather` nodes on CPU); no Neural Engine use is claimed. CoreML
   passes the FP32 parity tolerances; it is not bit-identical to CPU.
@@ -57,6 +58,12 @@ approval. Read `CLAUDE.md`, this file, PRD §8, then `docs/decisions.md`
 - `pytest tests/python`: 77 passed; `check_parity.py`: PASS; `check_native_parity.py`: PASS.
 - The camera checks are manual (Step 8 table in `docs/decisions.md`).
 
+## Phase 4 design note (from the developer)
+Depth currently updates about **7 times per second** (CoreML) or about 3 (CPU),
+and it **flickers** visibly. The Phase 4 relighting design must account for
+temporal stability, so lighting effects do not visibly jump between depth
+updates. (Depth carries its frame ID, age and lag; `docs/architecture.md`.)
+
 ## Unresolved limitations
 - **CoreML startup:** about 87 s the first time (compile, then cached in
   `~/Library/Caches/dev.relume.app/coreml/`) and 15–20 s on later launches;
@@ -71,6 +78,10 @@ approval. Read `CLAUDE.md`, this file, PRD §8, then `docs/decisions.md`
 - **CPU depth is about 3 updates/s**, which looks choppy.
 - **Dragging, live-resizing and minimizing windows pause compositing**
   (AppKit modal loops; Phase 5).
+- **OBS compatibility is untested** (OBS is not installed; Phase 7).
+- **Long-term memory stability is unverified:** memory levelled off within the
+  5-minute camera run (+1.7 MiB over its last 2.5 min); runs of hours were not
+  tested.
 
 ## Not fully verified (do not claim)
 1. **OBS compatibility** (OBS is not installed). Whether ScreenCaptureKit captures layer-contents windows, covered or not, is untested; that's Phase 7.

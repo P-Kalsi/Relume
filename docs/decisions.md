@@ -504,7 +504,7 @@ comparison panels: `build/coreml_bench/` (git-ignored).
   Loading and the output stays passthrough; memory is about 200 MiB higher.
 - **Default:** CPU stayed the default until the developer decided (gate 2).
 
-### Decision (approved 2026-10-27, provisional): CoreML CPUAndGPU is the default
+### Decision (approved 2026-10-27, confirmed 2026-10-28): CoreML CPUAndGPU is the default
 
 - **Option A** of gate 2: on macOS the default depth provider is CoreML with
   `CPUAndGPU` compute units; if the CoreML session cannot be created, the
@@ -556,9 +556,15 @@ Ready, the first one skipped.
   351 vs 340 ms, CoreML 131 vs 129 ms; updates/s 2.8 vs 2.9 and 7.1 vs 7.0;
   render-loop p95 17.1–17.4 vs 16.9–17.5 ms. Memory is about 130–215 MiB
   higher with the camera (capture buffers).
-- **Outcome:** the provisional CoreML CPUAndGPU default met every check;
-  the startup time (Loading for 15–20 s per launch) remains the recorded
-  usability limitation.
+- **Outcome:** the CoreML CPUAndGPU default met every check, and the
+  developer confirmed it and approved Phase 3 as complete on 2026-10-28.
+  Still open: the startup time (Loading for 15–20 s per launch, about 87 s the
+  first time), depth flicker, the camera-switch stall, OBS compatibility
+  (untested), and long-term memory stability (flat within 5 minutes; hours not
+  tested).
+- **Phase 4 note (developer):** depth updates about 7 times per second and
+  flickers; the relighting design must keep lighting from visibly jumping
+  between depth updates.
 
 - **Fixed: stale depth while the camera was unavailable.** In the switching
   test (Test 3), while the disconnected iPhone left the output black, the

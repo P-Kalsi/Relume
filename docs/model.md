@@ -162,7 +162,7 @@ Per-image observations (brighter = larger value = nearer):
 Measured with `scripts/benchmark_coreml.py`; full results in
 `docs/coreml_results.json`, the decision in `docs/decisions.md`.
 
-- **Default (approved 2026-10-27, provisional until the Step 8 camera
+- **Default (approved 2026-10-27; confirmed 2026-10-28 after the real-camera
   checks):** CoreML with `MLComputeUnits = CPUAndGPU`, MLProgram, static
   shapes, falling back to CPU automatically if the session cannot be created.
   CPU and the other compute-unit settings stay selectable in the Controls

@@ -32,7 +32,7 @@ struct AppOptions {
 
   // Depth inference. Default on macOS: CoreML with CPUAndGPU compute units,
   // falling back to CPU if the CoreML session cannot be created (approved
-  // 2026-10-27, provisional until the Step 8 camera checks; docs/decisions.md).
+  // 2026-10-27, confirmed after the camera checks 2026-10-28; docs/decisions.md).
   // Elsewhere: CPU. Off for --headless, --guided-capture and --save-frames
   // unless --inference is given (headless then also checks that matching
   // depth arrives).
