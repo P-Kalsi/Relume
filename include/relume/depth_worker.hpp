@@ -74,7 +74,9 @@ struct DepthResult {
 // Whether a depth result belongs to the camera image being shown: same
 // camera session (slot generation), same source size, and the transform the
 // current preprocessing would use. Anything else is never displayed.
-enum class DepthMatch : std::uint8_t { kMatch, kNoDepth, kOtherCamera, kOtherSize, kOtherTransform };
+// kNoImage: no camera image is being shown (e.g. the camera is unavailable),
+// so no depth can belong to it, however recent.
+enum class DepthMatch : std::uint8_t { kMatch, kNoDepth, kNoImage, kOtherCamera, kOtherSize, kOtherTransform };
 DepthMatch MatchDepth(const DepthResult* result, std::uint64_t camera_generation, std::uint32_t width,
                       std::uint32_t height, ResizeMethod method);
 std::string_view ToString(DepthMatch match);

@@ -530,7 +530,36 @@ comparison panels: `build/coreml_bench/` (git-ignored).
   `app_headless_inference_cpu_fallback`). The default is checked headless by
   `app_headless_inference_coreml_default`.
 
+### Real-camera checks (Step 8), findings so far
+
+- **Fixed: stale depth while the camera was unavailable.** In the switching
+  test (Test 3), while the disconnected iPhone left the output black, the
+  depth stats read "match, lag 0". No frames arrived, so the last depth still
+  matched the last frame shown, and the depth view could keep the old depth
+  labelled "in sync". Depth now matches only while camera video is being
+  shown (`DepthMatch::kNoImage` otherwise), so the depth view is cleared
+  whenever the output is black.
+
 ### Known limitations (recorded, out of Phase 3 scope)
+
+- **Selecting another camera stalls the render loop once, 66–92 ms
+  (measured; pre-existing, not caused by Phase 3).** `CaptureController::Select`
+  stops the old AVFoundation source on the main thread, and `Stop()` is
+  synchronous (`dispatch_sync` on the session queue; Phase 2 design). It
+  happens once per manual camera switch (the output is black at that moment);
+  steady-state iterations are unaffected. Moving the stop off the main thread
+  would change the camera pipeline and is left for a later phase.
+
+- **Depth flicker (open issue for a later phase).** On the real camera, the
+  depth view flickers with both providers; the developer saw it as slightly
+  more noticeable with CoreML (2026-10-28, Step 8 Test 2). On identical burst
+  frames, CoreML's frame-to-frame flicker equals CPU's (ratio 1.00) and its
+  output differs from CPU's by under 3e-5 of the range, so the model output
+  itself is no less stable. A likely, unproven explanation: CoreML shows about
+  2.5× as many depth updates per second (7.1 vs 2.8), so the model's own
+  frame-to-frame variation appears more often. Not addressed in Phase 3 (no
+  model change and no temporal smoothing); to be investigated when relighting
+  quality is evaluated.
 
 - **Facial depth is fairly smooth.** In several frames, both letterbox and
   stretch give smooth, low-relief depth across the face (little separation of

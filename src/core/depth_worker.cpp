@@ -79,6 +79,7 @@ std::string_view ToString(DepthMatch match) {
   switch (match) {
     case DepthMatch::kMatch: return "match";
     case DepthMatch::kNoDepth: return "no depth";
+    case DepthMatch::kNoImage: return "no camera image";
     case DepthMatch::kOtherCamera: return "other camera";
     case DepthMatch::kOtherSize: return "other size";
     case DepthMatch::kOtherTransform: return "other transform";

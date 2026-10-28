@@ -448,6 +448,7 @@ TEST(DepthMatch, RejectsDepthFromAnotherCameraSizeOrTransform) {
   EXPECT_EQ(MatchDepth(&result, 4, 1280, 720, ResizeMethod::kStretch), DepthMatch::kOtherCamera);
   EXPECT_EQ(MatchDepth(&result, 3, 1920, 1080, ResizeMethod::kStretch), DepthMatch::kOtherSize);
   EXPECT_EQ(MatchDepth(&result, 3, 1280, 720, ResizeMethod::kLetterbox), DepthMatch::kOtherTransform);
+  EXPECT_EQ(ToString(DepthMatch::kNoImage), "no camera image");
 }
 
 // --- InferenceController ---

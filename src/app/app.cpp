@@ -164,6 +164,11 @@ class DepthTracker {
   }
 
   DepthMatch Match(const VideoPipeline& pipeline) const {
+    // While the output is black (camera stopped, unavailable or switching),
+    // the last frame shown is gone: no depth matches it.
+    if (!pipeline.showing_video) {
+      return current_ ? DepthMatch::kNoImage : DepthMatch::kNoDepth;
+    }
     return MatchDepth(current_.get(), pipeline.camera_generation, pipeline.frame_width, pipeline.frame_height,
                       method_);
   }
