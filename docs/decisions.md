@@ -288,7 +288,7 @@ Output window is resized and minimized, on a fixed schedule).
 - **The occlusion test needs a GUI session.** It carries the `display` label:
   `ctest --preset display`.
 
-## Phase 3 — Native depth inference (in progress, started 2026-10-25)
+## Phase 3 — Native depth inference (2026-10-25 to 2026-10-28)
 
 ### Decision (approved 2026-10-26): stretch is the default preprocessing method
 
@@ -530,7 +530,35 @@ comparison panels: `build/coreml_bench/` (git-ignored).
   `app_headless_inference_cpu_fallback`). The default is checked headless by
   `app_headless_inference_coreml_default`.
 
-### Real-camera checks (Step 8), findings so far
+### Real-camera checks (Step 8, 2026-10-28)
+
+FaceTime HD camera, 1280×720 `420v` NV12 at 30 fps, Release build,
+launched with `open`, logs in the git-ignored `build/camera_tests/` (stats
+text only; no frames saved). Steady state = 10 s stats intervals after
+Ready, the first one skipped.
+
+| Test | Capture / composed | Render loop p95 / max | Depth (updates/s, run p50, age p50, lag p50) | Memory | Result |
+|---|---|---|---|---|---|
+| 1. CPU, 90 s | 30.0 / 30.0 fps, 0 drops | 17.1 / 22.3 ms | 2.8/s, 351 ms, 384 ms, 11 frames | 552–562 MiB | pass |
+| 2. CoreML CPUAndGPU, 120 s | 30.0 / 30.0, 0 drops | 17.4 / 49.0 ms (once) | 7.1/s, 131 ms, 168 ms, 5 frames | 686–693 MiB | pass |
+| 3. Provider + camera switching (guided) | 30 fps when live; black while unavailable | 17.1–17.7 / 66–92 ms at camera switches | all switches settled; 4 workers started and joined; 0 mismatched | 300–720 MiB, released with each session | pass; one bug found and fixed (below) |
+| 3b. Disconnect re-check after the fix | — | 84–90 ms at camera switches | "no camera image" in every interval while disconnected; 3 late results refused | — | pass |
+| 4. CPU fallback (`--coreml-strict`) | 30.0 / 30.0, 0 drops | 17.2 / 23.9 ms | CPU fallback with ORT's reason; 2.9/s, 341 ms | 446–486 MiB | pass |
+| 5a/5b. Missing / corrupt model | live, 0 drops | 17.6–18.0 / 24–25 ms | Error with reason; passthrough | ~238 MiB | pass |
+| 6. CoreML, 5 minutes | 29.99 / 29.99, 0 drops | 17.3 / 35.2 ms; no iteration over 50 ms (`--trace`) | 6.8/s, 132 ms, 168 ms, 4 frames | 675 → 692 MiB; 690.4 → 692.1 over the last 2.5 min | pass |
+
+- **Developer's visual checks:** alignment Good (face, hair, shoulders,
+  hands) with the overlay; CoreML depth follows movement noticeably faster
+  than CPU; camera video smooth with both; depth flicker visible with both,
+  slightly more noticeable with CoreML (open issue, below); CPU depth view
+  looks choppy (2.8 updates/s, measured).
+- **Real camera vs synthetic file source:** within about 5%. CPU run p50
+  351 vs 340 ms, CoreML 131 vs 129 ms; updates/s 2.8 vs 2.9 and 7.1 vs 7.0;
+  render-loop p95 17.1–17.4 vs 16.9–17.5 ms. Memory is about 130–215 MiB
+  higher with the camera (capture buffers).
+- **Outcome:** the provisional CoreML CPUAndGPU default met every check;
+  the startup time (Loading for 15–20 s per launch) remains the recorded
+  usability limitation.
 
 - **Fixed: stale depth while the camera was unavailable.** In the switching
   test (Test 3), while the disconnected iPhone left the output black, the
@@ -548,7 +576,9 @@ comparison panels: `build/coreml_bench/` (git-ignored).
   synchronous (`dispatch_sync` on the session queue; Phase 2 design). It
   happens once per manual camera switch (the output is black at that moment);
   steady-state iterations are unaffected. Moving the stop off the main thread
-  would change the camera pipeline and is left for a later phase.
+  would change the camera pipeline and is left for a later phase. In the same
+  tests, 61–63 ms iterations inside `glfwPollEvents` coincided with the iPhone
+  (Continuity) camera connecting; that time is spent in macOS event handling.
 
 - **Depth flicker (open issue for a later phase).** On the real camera, the
   depth view flickers with both providers; the developer saw it as slightly
