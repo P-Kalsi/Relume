@@ -29,12 +29,21 @@ struct AppOptions {
   bool guided_self_test = false;          // with --guided-capture --source file: script one still and one burst
   bool inference_switch_test = false;     // --inference-switch-test: scripted provider changes, loop measured
 
-  // Depth inference. Default: CPU. Off for --headless, --guided-capture and
-  // --save-frames unless --inference is given (headless then also checks
-  // that matching depth arrives).
-  std::optional<ExecutionProvider> inference = ExecutionProvider::kCpu;  // nullopt = off
+  // Depth inference. Default on macOS: CoreML with CPUAndGPU compute units,
+  // falling back to CPU if the CoreML session cannot be created (approved
+  // 2026-10-27, provisional until the Step 8 camera checks; docs/decisions.md).
+  // Elsewhere: CPU. Off for --headless, --guided-capture and --save-frames
+  // unless --inference is given (headless then also checks that matching
+  // depth arrives).
+#if defined(__APPLE__)
+  std::optional<ExecutionProvider> inference = ExecutionProvider::kCoreML;  // nullopt = off
+#else
+  std::optional<ExecutionProvider> inference = ExecutionProvider::kCpu;
+#endif
   bool inference_set = false;             // --inference was given
-  CoreMLUnits coreml_units = CoreMLUnits::kAll;
+  CoreMLUnits coreml_units = CoreMLUnits::kCPUAndGPU;
+  bool coreml_strict = false;             // --coreml-strict: diagnostic; this model then fails to load on
+                                          // CoreML, which exercises the automatic CPU fallback
   std::string model_path;                 // default: models/depth_anything_v2_small_448.onnx in the repo
   int threads = 4;                        // ONNX Runtime intra-op threads (measured choice; docs/decisions.md)
   ResizeMethod preprocess = kDefaultResizeMethod;

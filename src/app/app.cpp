@@ -59,10 +59,12 @@ constexpr char kUsage[] =
     "  --guided-capture          off by default: take 12 stills and 2 bursts one at a time from the\n"
     "                            Controls window, saved to the --save-dir folder (file source: UI\n"
     "                            testing only, and only with an explicit --save-dir)\n"
-    "  --inference off|cpu|coreml depth inference (default: cpu; off for --headless, --guided-capture\n"
-    "                            and --save-frames unless given; headless with --inference also\n"
-    "                            checks that matching depth arrives)\n"
-    "  --coreml-units ALL|CPUOnly|CPUAndGPU|CPUAndNeuralEngine  CoreML compute units (default ALL)\n"
+    "  --inference off|cpu|coreml depth inference (default: coreml, CPU fallback; off for --headless,\n"
+    "                            --guided-capture and --save-frames unless given; headless with\n"
+    "                            --inference also checks that matching depth arrives)\n"
+    "  --coreml-units ALL|CPUOnly|CPUAndGPU|CPUAndNeuralEngine  CoreML compute units (default CPUAndGPU)\n"
+    "  --coreml-strict           diagnostic: refuse CPU nodes inside the CoreML session; with this\n"
+    "                            model the session fails, so the run shows the automatic CPU fallback\n"
     "  --model <path.onnx>       depth model (default: models/depth_anything_v2_small_448.onnx)\n"
     "  --threads <N>             ONNX Runtime CPU threads, 1-16 (default 4)\n"
     "  --preprocess stretch|letterbox  resize policy (default stretch)\n"
@@ -561,7 +563,10 @@ int RunHeadless(const AppOptions& options) {
                   t.new_w, t.new_h, t.pad_x, t.pad_y, result->convert_ms, result->preprocess_ms, result->run_ms,
                   result->range.valid ? "valid" : "INVALID", result->range.lo, result->range.hi);
     }
-    const bool ok = status.state == InferenceState::kReady && match == DepthMatch::kMatch && result != nullptr &&
+    // Ready, or CPU fallback when CoreML could not be used (the label says
+    // which; the fallback CTest checks for it explicitly).
+    const bool running = status.state == InferenceState::kReady || status.state == InferenceState::kCpuFallback;
+    const bool ok = running && match == DepthMatch::kMatch && result != nullptr &&
                     result->range.valid && result->frame_id <= pipeline.last_frame_id &&
                     result->camera_generation == slot.generation();
     std::printf("  depth matches the shown camera image (generation, size, transform): %s (%s)\n", ok ? "yes" : "NO",
@@ -1670,6 +1675,8 @@ std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error
         return std::nullopt;
       }
       options.coreml_units = *units;
+    } else if (arg == "--coreml-strict") {
+      options.coreml_strict = true;
     } else if (arg == "--model") {
       const char* v = value();
       if (v == nullptr || *v == '\0') {
@@ -1786,6 +1793,7 @@ std::optional<DepthWorkerConfig> InferenceConfig(const AppOptions& options) {
   config.estimator.coreml_units = options.coreml_units;
   if (config.estimator.provider == ExecutionProvider::kCoreML) {
     config.estimator.coreml_cache_dir = CoreMLCacheDirectory(options.model_path, options.coreml_units);
+    config.estimator.coreml_strict = options.coreml_strict;
   }
   config.estimator.intra_op_threads = options.threads;
   config.method = options.preprocess;

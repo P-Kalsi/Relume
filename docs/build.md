@@ -99,6 +99,13 @@ open -W -n --stdout "$PWD/relume.log" --stderr "$PWD/relume.log" \
 #   --presenter layer|surface  window presentation (default layer; surface is the
 #                              CAMetalLayer fallback, which can freeze ~1 s on cover)
 #   --trace                    log the phases of render-loop iterations over 50 ms
+#   --inference off|cpu|coreml depth provider (default coreml, CPUAndGPU, CPU fallback)
+#   --coreml-units ALL|CPUOnly|CPUAndGPU|CPUAndNeuralEngine   --threads N (CPU, default 4)
+#   --preprocess stretch|letterbox   --model <path.onnx>
+#   --coreml-strict            diagnostic: forces the CoreML session to fail -> CPU fallback
+#   The first CoreML launch compiles the model (about 90 s, cached in
+#   ~/Library/Caches/dev.relume.app/coreml); later launches take about 16 s.
+#   The output is passthrough meanwhile.
 
 # Local webcam test frames for the preprocessing comparison (opt-in; frames
 # stay on this Mac in the git-ignored third_party/assets/local_frames/).

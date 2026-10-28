@@ -132,8 +132,22 @@ if(EXISTS "${PROJECT_SOURCE_DIR}/models/depth_anything_v2_small_448.onnx")
             --preprocess letterbox)
   add_test(NAME app_headless_inference_missing_model
     COMMAND Relume --headless --source file --frames 10 --inference cpu --model /nonexistent/model.onnx)
+  # The default provider (CoreML CPUAndGPU) end to end; the first run compiles
+  # the model into the user's CoreML cache (about 90 s), later runs about 16 s.
+  add_test(NAME app_headless_inference_coreml_default
+    COMMAND Relume --headless --source file --pattern 1280x720 --pixel-format nv12 --frames 30 --inference coreml)
+  # Automatic CPU fallback: strict mode makes the CoreML session fail on this
+  # model (36 Gather nodes need CPU), so the worker must fall back to CPU and
+  # still deliver matching depth.
+  add_test(NAME app_headless_inference_cpu_fallback
+    COMMAND Relume --headless --source file --pattern 1280x720 --pixel-format nv12 --frames 30 --inference coreml
+            --coreml-strict)
   set_tests_properties(app_headless_inference_nv12_720p app_headless_inference_portrait_letterbox
     PROPERTIES TIMEOUT 120)
+  set_tests_properties(app_headless_inference_coreml_default PROPERTIES TIMEOUT 400
+    PASS_REGULAR_EXPRESSION "Depth: Ready [(]CoreML [(]CPUAndGPU[)].*\n.*\n.*depth matches the shown camera image.*: yes")
+  set_tests_properties(app_headless_inference_cpu_fallback PROPERTIES TIMEOUT 400
+    PASS_REGULAR_EXPRESSION "Depth: CPU fallback [|].*running on CPU.*\n.*\n.*depth matches the shown camera image.*: yes")
   # A missing model must be an error state, not a crash or a hang: the run
   # reports the Error status and passthrough, and refuses to call it a match.
   set_tests_properties(app_headless_inference_missing_model PROPERTIES TIMEOUT 60

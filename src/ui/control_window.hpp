@@ -48,10 +48,10 @@ struct InferenceChoice {
 };
 inline constexpr InferenceChoice kInferenceChoices[] = {
     {"Off", std::nullopt, CoreMLUnits::kAll},
+    {"CoreML: CPU and GPU (default)", ExecutionProvider::kCoreML, CoreMLUnits::kCPUAndGPU},
     {"CPU", ExecutionProvider::kCpu, CoreMLUnits::kAll},
     {"CoreML: ALL", ExecutionProvider::kCoreML, CoreMLUnits::kAll},
     {"CoreML: CPU and Neural Engine", ExecutionProvider::kCoreML, CoreMLUnits::kCPUAndNeuralEngine},
-    {"CoreML: CPU and GPU", ExecutionProvider::kCoreML, CoreMLUnits::kCPUAndGPU},
     {"CoreML: CPU only", ExecutionProvider::kCoreML, CoreMLUnits::kCPUOnly},
 };
 

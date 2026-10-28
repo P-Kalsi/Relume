@@ -502,7 +502,33 @@ comparison panels: `build/coreml_bench/` (git-ignored).
 - **Costs of the GPU settings:** session creation takes about 16 s even with
   a filled compile cache (87–107 s the first time), during which the status is
   Loading and the output stays passthrough; memory is about 200 MiB higher.
-- **Default:** CPU stays the default until the developer decides (gate 2).
+- **Default:** CPU stayed the default until the developer decided (gate 2).
+
+### Decision (approved 2026-10-27, provisional): CoreML CPUAndGPU is the default
+
+- **Option A** of gate 2: on macOS the default depth provider is CoreML with
+  `CPUAndGPU` compute units; if the CoreML session cannot be created, the
+  worker falls back to CPU automatically (status "CPU fallback", with ONNX
+  Runtime's reason). Other platforms default to CPU. Manual selection stays in
+  the Controls window (Off, CoreML CPU and GPU, CPU, and the other CoreML
+  settings) and on the command line.
+- **Provisional** until the Step 8 real-camera checks pass; any significant
+  regression found there is reported before the default is final.
+- **Unchanged:** passthrough video and a visible Loading status while CoreML
+  initializes; no CPU inference during CoreML initialization (not approved;
+  the worker architecture stays as it is); the FP32 tolerances (no FP16
+  tolerances needed or approved).
+- **Wording:** CoreML passes the FP32 parity tolerances; it is not
+  bit-identical to CPU. 481 of 517 nodes execute through CoreML and the other
+  36 on the CPU. No Neural Engine acceleration is claimed.
+- **Unresolved usability limitation:** session creation takes about 87 s the
+  first time and about 16 s on later launches (compile cache filled). It must
+  be addressed or reassessed before production.
+- **Fallback test:** `--coreml-strict` (diagnostic) makes the CoreML session
+  fail on this model, because its 36 CPU nodes are refused. Headless, the
+  worker then fell back to CPU and delivered matching depth (CTest
+  `app_headless_inference_cpu_fallback`). The default is checked headless by
+  `app_headless_inference_coreml_default`.
 
 ### Known limitations (recorded, out of Phase 3 scope)
 

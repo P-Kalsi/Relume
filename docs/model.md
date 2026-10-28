@@ -30,7 +30,7 @@ Neither the weights nor the ONNX file is in git. `scripts/setup_python.sh` downl
 
 All dimensions are fixed; there are no dynamic axes. The op types are Add, Concat, Conv,
 ConvTranspose, Div, Erf, Gather, LayerNormalization, MatMul, Mul, Relu,
-Reshape, Resize, Slice, Softmax, Squeeze, Transpose and Unsqueeze. Whether CoreML supports all of them is a Phase 3 question; it has not been tested.
+Reshape, Resize, Slice, Softmax, Squeeze, Transpose and Unsqueeze. CoreML (ONNX Runtime 1.31.0 CoreML EP, MLProgram) takes 481 of the 517 nodes; the 36 `Gather` nodes run on the CPU (see "CoreML execution provider" below).
 
 ## Preprocessing contract (status: selected — stretch default)
 
@@ -155,12 +155,43 @@ Per-image observations (brighter = larger value = nearer):
 | ONNX Runtime CPU | 328 ms | 338 ms |
 
 - **Conditions:** 1×3×448×448, 5 warm-up runs then 50 timed runs, Apple M2 (16 GB), macOS 14.8.9, Python 3.14.7, torch 2.14.1 (4 threads), ONNX Runtime 1.31.0 with the default thread count. Measured on a laptop, not a controlled benchmark.
-- **About 3 inferences per second on the CPU is far below the 30 FPS goal.** CoreML (Phase 3) has not been measured, and nothing here predicts its speed.
+- **About 3 inferences per second on the CPU is far below the 30 FPS goal.**
+
+## CoreML execution provider (Phase 3)
+
+Measured with `scripts/benchmark_coreml.py`; full results in
+`docs/coreml_results.json`, the decision in `docs/decisions.md`.
+
+- **Default (approved 2026-10-27, provisional until the Step 8 camera
+  checks):** CoreML with `MLComputeUnits = CPUAndGPU`, MLProgram, static
+  shapes, falling back to CPU automatically if the session cannot be created.
+  CPU and the other compute-unit settings stay selectable in the Controls
+  window and with `--inference` / `--coreml-units`.
+- **What runs where:** 481 of the 517 nodes execute through CoreML in 13
+  partitions; the remaining 36 (`Gather`, the q/k/v selects of the 12
+  attention blocks) run on the ONNX Runtime CPU provider. CoreML's compute plan
+  places all 481 CoreML ops on the GPU for CPUAndGPU. **No op is planned on
+  the Neural Engine in any setting, so no Neural Engine acceleration is
+  claimed.** The compute plan is CoreML's planned placement; per-run hardware
+  use was not observed.
+- **Accuracy:** CPUAndGPU passes the FP32 parity tolerances against CPU on the
+  fixtures and the local webcam frames (worst rel_max 2.7e-5, tolerance 4e-4).
+  It is **not bit-identical** to CPU; the tolerances are unchanged, and no FP16
+  tolerances were needed or approved.
+- **Speed (`relume_depth`, 200 runs):** Run p50 121 ms, p95 177 ms (CPU: 316 /
+  328 ms).
+- **Startup (unresolved usability limitation):** session creation takes about
+  **87 s the first time** (CoreML compiles the model; cached in
+  `~/Library/Caches/dev.relume.app/coreml/`, keyed by the model file's size and
+  modification time) and about **16 s on later launches** with the cache. The
+  output is passthrough with a visible Loading status meanwhile. This must be
+  addressed or reassessed before production.
 
 ## Limitations
 
-- **Letterbox choice:** provisional. The comparison above has no faces or webcam frames.
+- **Preprocessing choice:** stretch, chosen on 12 webcam stills and 2 bursts of one person; letterbox stays supported.
 - **Depth direction:** checked visually on 5 images; this is not a metric evaluation.
-- **CoreML:** not exercised. Phase 0/1 show only that the CoreML provider is available.
+- **CoreML:** partial (481 of 517 nodes); startup 87 s first, about 16 s later; see above.
+- **Facial depth is fairly smooth** in several webcam frames (both methods); a limit for judging relighting quality later.
 - **Downscale aliasing:** bilinear downscaling by more than 2× aliases (for example 1920→448 is 4.3×). This is accepted for now and covered by the round-trip tests, not optimized.
-- **Not yet done:** C++ preprocessing and inference are Phase 3. FP16 and INT8 are out of scope.
+- **FP16 and INT8** are out of scope.
