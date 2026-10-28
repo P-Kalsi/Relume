@@ -181,6 +181,9 @@ ControlsActions ControlWindow::BuildUi(const ControlsModel& model) {
     actions.toggle_output = true;
   }
 
+  if (model.test_guide != nullptr) {
+    BuildTestGuide(*model.test_guide, model.now, actions);
+  }
   if (model.guided != nullptr) {
     BuildGuidedCapture(*model.guided, model.now, actions);
   }
@@ -206,6 +209,44 @@ ControlsActions ControlWindow::BuildUi(const ControlsModel& model) {
   }
   ImGui::End();
   return actions;
+}
+
+// Timed steps for a manual test. Text only: the person does every action.
+void ControlWindow::BuildTestGuide(const TestGuide& guide, TestGuide::Clock::time_point now,
+                                   ControlsActions& actions) {
+  const auto clock = [](double seconds) {
+    const int s = static_cast<int>(seconds);
+    char text[16];
+    std::snprintf(text, sizeof(text), "%d:%02d", s / 60, s % 60);
+    return std::string(text);
+  };
+  ImGui::Separator();
+  const std::size_t index = guide.current();
+  const GuideStep& step = guide.step(index);
+  ImGui::TextColored({0.55f, 0.75f, 1.0f, 1.0f}, "Test guide  |  elapsed %s  |  step %zu of %zu",
+                     clock(guide.elapsed(now)).c_str(), index + 1, guide.size());
+  ImGui::PushFont(nullptr, ImGui::GetStyle().FontSizeBase * 1.3f);
+  ImGui::TextUnformatted(step.title.c_str());
+  ImGui::PopFont();
+  ImGui::TextWrapped("%s", step.instruction.c_str());
+  if (!guide.finished()) {
+    ImGui::TextColored({0.95f, 0.80f, 0.30f, 1.0f}, "Next step in %.0f s  (this step %s-%s)", guide.remaining(now),
+                       clock(guide.step_start(index)).c_str(), clock(guide.step_start(index + 1)).c_str());
+    ImGui::SameLine();
+    if (ImGui::Button("Skip to next step")) {
+      actions.test_guide_skip = true;
+    }
+  }
+  if (ImGui::TreeNode("All steps")) {
+    for (std::size_t i = 0; i < guide.size(); ++i) {
+      const ImVec4 color = i < index    ? ImVec4{0.5f, 0.5f, 0.5f, 1.0f}
+                           : i == index ? ImVec4{0.35f, 0.85f, 0.45f, 1.0f}
+                                        : ImVec4{0.85f, 0.85f, 0.85f, 1.0f};
+      ImGui::TextColored(color, "%s  %2zu. %s", clock(guide.step_start(i)).c_str(), i + 1,
+                         guide.step(i).title.c_str());
+    }
+    ImGui::TreePop();
+  }
 }
 
 // Inference status and settings. The depth label always says how old the

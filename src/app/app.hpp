@@ -28,6 +28,7 @@ struct AppOptions {
   bool guided_capture = false;            // --guided-capture: shots taken from the Controls window
   bool guided_self_test = false;          // with --guided-capture --source file: script one still and one burst
   bool inference_switch_test = false;     // --inference-switch-test: scripted provider changes, loop measured
+  std::string test_guide;                 // --test-guide <name>: timed on-screen steps for a manual test
 
   // Depth inference. Default on macOS: CoreML with CPUAndGPU compute units,
   // falling back to CPU if the CoreML session cannot be created (approved

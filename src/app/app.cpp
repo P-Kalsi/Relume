@@ -14,6 +14,7 @@
 #include "relume/pixel_convert.hpp"
 #include "relume/renderer.hpp"
 #include "relume/stats.hpp"
+#include "relume/test_guide.hpp"
 #include "ui/control_window.hpp"
 
 #include <GLFW/glfw3.h>
@@ -68,6 +69,8 @@ constexpr char kUsage[] =
     "  --model <path.onnx>       depth model (default: models/depth_anything_v2_small_448.onnx)\n"
     "  --threads <N>             ONNX Runtime CPU threads, 1-16 (default 4)\n"
     "  --preprocess stretch|letterbox  resize policy (default stretch)\n"
+    "  --test-guide switching    show timed steps for the manual switching test in the Controls window\n"
+    "                            (instructions only; you do each step; step changes are logged)\n"
     "  --inference-switch-test   switch CPU -> CoreML -> CPU -> off -> on and 10 rapid changes while\n"
     "                            measuring the loop; exit 0 only if no iteration exceeds 50 ms\n";
 
@@ -1154,6 +1157,11 @@ int RunWindowed(const AppOptions& options) {
       {"off -> CPU", ExecutionProvider::kCpu, CoreMLUnits::kAll, 0},
       {"10 rapid changes, ending on CPU", ExecutionProvider::kCpu, CoreMLUnits::kAll, 10},
   };
+  std::optional<TestGuide> test_guide;
+  if (options.test_guide == "switching") {
+    test_guide.emplace(SwitchingTestGuide(), run_start);
+    std::printf("[guide] t=0.0s step 1/%zu: %s\n", test_guide->size(), test_guide->step(0).title.c_str());
+  }
   std::size_t switch_step = 0;
   Clock::time_point switch_requested{};
   Clock::time_point switch_settled = run_start;
@@ -1231,6 +1239,15 @@ int RunWindowed(const AppOptions& options) {
       model.guided = &*guided;
       model.now = Clock::now();
     }
+    if (test_guide) {
+      if (test_guide->Update(Clock::now())) {
+        std::printf("[guide] t=%.1fs step %zu/%zu: %s\n", test_guide->elapsed(Clock::now()), test_guide->current() + 1,
+                    test_guide->size(), test_guide->step(test_guide->current()).title.c_str());
+        std::fflush(stdout);
+      }
+      model.test_guide = &*test_guide;
+      model.now = Clock::now();
+    }
     model.status = status;
     model.output_visible = output.visible();
     capture.FillModel(model);
@@ -1259,6 +1276,12 @@ int RunWindowed(const AppOptions& options) {
     }
     if (actions.toggle_output) {
       output.visible() ? output.Hide() : output.Show();
+    }
+    if (test_guide && actions.test_guide_skip) {
+      test_guide->Skip(Clock::now());
+      std::printf("[guide] t=%.1fs step %zu/%zu (skipped to): %s\n", test_guide->elapsed(Clock::now()),
+                  test_guide->current() + 1, test_guide->size(), test_guide->step(test_guide->current()).title.c_str());
+      std::fflush(stdout);
     }
     if (actions.toggle_depth_overlay) {
       depth_overlay = !depth_overlay;
@@ -1653,6 +1676,13 @@ std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error
         return std::nullopt;
       }
       options.save.directory = v;
+    } else if (arg == "--test-guide") {
+      const char* v = value();
+      if (v == nullptr || std::string_view(v) != "switching") {
+        error = "--test-guide must be: switching";
+        return std::nullopt;
+      }
+      options.test_guide = v;
     } else if (arg == "--inference-switch-test") {
       options.inference_switch_test = true;
     } else if (arg == "--inference") {
@@ -1749,6 +1779,10 @@ std::optional<AppOptions> ParseOptions(int argc, char** argv, std::string& error
   // burst writer could not keep up). --inference turns it on explicitly.
   if ((options.headless || options.guided_capture || options.save.count > 0) && !options.inference_set) {
     options.inference = std::nullopt;
+  }
+  if (!options.test_guide.empty() && options.headless) {
+    error = "--test-guide needs the Controls window";
+    return std::nullopt;
   }
   if (options.inference_switch_test && (options.headless || !options.inference)) {
     error = "--inference-switch-test needs windows and inference on";

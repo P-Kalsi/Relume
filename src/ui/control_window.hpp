@@ -12,6 +12,7 @@
 #include "relume/guided_capture.hpp"
 #include "relume/inference_controller.hpp"
 #include "relume/renderer.hpp"
+#include "relume/test_guide.hpp"
 
 #include <optional>
 #include <string>
@@ -38,6 +39,8 @@ struct ControlsModel {
   std::string inference_timing;             // e.g. "run p50 330 ms, p95 341 ms"
   const DepthDebugTexture* depth_view = nullptr;
   bool depth_overlay = false;
+
+  const TestGuide* test_guide = nullptr;  // --test-guide only: timed steps for a manual test
 };
 
 // The inference settings offered in the Controls window.
@@ -63,6 +66,7 @@ struct ControlsActions {
   bool guided_capture = false;               // Capture / Retake / Start burst
   std::optional<int> inference_choice;       // a new entry of kInferenceChoices
   bool toggle_depth_overlay = false;
+  bool test_guide_skip = false;  // end the current guide step now
 };
 
 class ControlWindow {
@@ -93,6 +97,7 @@ class ControlWindow {
   void BuildGuidedCapture(const GuidedCapture& guided, GuidedCapture::Clock::time_point now,
                           ControlsActions& actions);
   void BuildInference(const ControlsModel& model, ControlsActions& actions);
+  void BuildTestGuide(const TestGuide& guide, TestGuide::Clock::time_point now, ControlsActions& actions);
 
   const GpuContext& gpu_;
   const OutputTexture& output_;
