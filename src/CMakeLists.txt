@@ -18,7 +18,8 @@ add_library(relume_core STATIC
   core/depth_estimator.cpp
   core/depth_worker.cpp
   core/inference_controller.cpp
-  core/test_guide.cpp)
+  core/test_guide.cpp
+  core/lighting.cpp)
 target_include_directories(relume_core PUBLIC "${PROJECT_SOURCE_DIR}/include")
 # The preprocessing contract is matched against numpy, which rounds every
 # product and sum separately: no fused multiply-add.
