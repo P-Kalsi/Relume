@@ -66,6 +66,13 @@ InferenceController::~InferenceController() { Shutdown(); }
 
 void InferenceController::Request(std::optional<DepthWorkerConfig> config) { pending_ = std::move(config); }
 
+void InferenceController::SetStabilizer(const StabilizerConfig& config) {
+  stabilizer_ = config;
+  if (active_) {
+    active_->SetStabilizer(config);
+  }
+}
+
 void InferenceController::Retire() {
   active_->RequestStop();  // does not wait
   retiring_ = std::move(active_);
@@ -100,6 +107,9 @@ void InferenceController::Update() {
   if (wanted_) {
     DepthWorkerConfig config = *wanted_;
     config.generation = next_generation_++;
+    if (stabilizer_) {
+      config.stabilizer = *stabilizer_;
+    }
     depth_.Clear();
     active_ = std::make_unique<DepthWorker>(std::move(config), factory_, frames_, depth_);
     ++started_;

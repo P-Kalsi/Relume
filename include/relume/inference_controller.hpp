@@ -61,6 +61,9 @@ class InferenceController {
 
   // Requests a configuration, or off (nullopt). Never blocks; applied by Update().
   void Request(std::optional<DepthWorkerConfig> config);
+  // The stabilizer configuration for the active worker and every later one.
+  // Never blocks; never restarts a worker.
+  void SetStabilizer(const StabilizerConfig& config);
   // Joins finished retiring workers, retires the active one if a different
   // configuration is pending, and starts the pending one when possible.
   // Never blocks.
@@ -90,6 +93,7 @@ class InferenceController {
   // means "off".
   std::optional<std::optional<DepthWorkerConfig>> pending_;
   std::optional<DepthWorkerConfig> wanted_;  // the configuration that should be running
+  std::optional<StabilizerConfig> stabilizer_;  // set by SetStabilizer; overrides the configs' own
   std::uint64_t next_generation_ = 1;
   std::uint64_t started_ = 0;
   std::uint64_t joined_ = 0;

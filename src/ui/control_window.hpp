@@ -27,6 +27,8 @@ namespace relume {
 struct RelightControls {
   LightSettings light;
   bool bypass = false;     // A/B: show camera passthrough (relighting keeps running)
+  bool align = true;       // temporal stage A: global scale/shift alignment (on the worker)
+  bool ema = true;         // temporal stage B: motion-adaptive EMA (on the worker)
   bool crossfade = true;   // temporal stage C: crossfade between depth results
   int view = 0;            // index into kRelightViews: what the right-hand panel shows
   bool operator==(const RelightControls&) const = default;

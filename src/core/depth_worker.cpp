@@ -158,6 +158,7 @@ DepthWorker::DepthWorker(DepthWorkerConfig config, EstimatorFactory factory, Lat
     : config_(std::move(config)), factory_(std::move(factory)), frames_(frames), out_(out),
       pool_(std::make_shared<ResultPool>()) {
   snapshot_.active_provider = config_.estimator.provider;
+  stabilizer_ = config_.stabilizer;
   thread_ = std::thread([this] { ThreadMain(); });
 }
 
@@ -186,6 +187,11 @@ void DepthWorker::Join() {
 WorkerSnapshot DepthWorker::snapshot() const {
   std::lock_guard lock(mutex_);
   return snapshot_;
+}
+
+void DepthWorker::SetStabilizer(const StabilizerConfig& config) {
+  std::lock_guard lock(mutex_);
+  stabilizer_ = config;
 }
 
 void DepthWorker::SetPhase(WorkerPhase phase, const std::string& error) {
@@ -323,6 +329,7 @@ bool DepthWorker::CreateEstimator(std::unique_ptr<IDepthEstimator>& estimator) {
 
 void DepthWorker::Loop(IDepthEstimator& estimator) {
   Preprocessor preprocessor;
+  DepthStabilizer stabilizer(config_.stabilizer);
   std::vector<std::uint8_t> rgb;
   std::vector<float> range_scratch;
   std::uint64_t last_frame_id = 0;
@@ -381,7 +388,16 @@ void DepthWorker::Loop(IDepthEstimator& estimator) {
     result->transform = *transform;
     result->depth.assign(estimator.output(), estimator.output() + kNetDepthFloats);  // reuses capacity
     result->range = ComputeDisplayRange(result->depth.data(), *transform, range_scratch);
+    const Clock::time_point t_stabilize = Clock::now();
+    {
+      std::lock_guard lock(mutex_);
+      stabilizer.SetConfig(stabilizer_);
+    }
+    result->stable.resize(kNetDepthFloats);  // reuses capacity
+    result->stabilizer = stabilizer.Process(result->depth.data(), *transform, result->range.lo, result->range.hi,
+                                            result->range.valid, camera_generation, result->stable.data());
     const Clock::time_point t4 = Clock::now();
+    result->stabilize_ms = Ms(t_stabilize, t4);
     result->finished_time = t4;
     result->convert_ms = Ms(t0, t1);
     result->preprocess_ms = Ms(t1, t2);

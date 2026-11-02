@@ -312,7 +312,13 @@ void ControlWindow::BuildLighting(const ControlsModel& model, ControlsActions& a
   ImGui::TextDisabled("%s", model.relight_label.c_str());
   bool changed = ImGui::Checkbox("Bypass (A/B)", &c.bypass);
   ImGui::SameLine();
-  changed |= ImGui::Checkbox("Crossfade depth updates", &c.crossfade);
+  ImGui::TextDisabled("| Temporal:");
+  ImGui::SameLine();
+  changed |= ImGui::Checkbox("A: align", &c.align);
+  ImGui::SameLine();
+  changed |= ImGui::Checkbox("B: EMA", &c.ema);
+  ImGui::SameLine();
+  changed |= ImGui::Checkbox("C: crossfade", &c.crossfade);
   ImGui::SameLine();
   ImGui::SetNextItemWidth(200.0f);
   const int current = std::clamp(c.view, 0, static_cast<int>(std::size(kRelightViews)) - 1);

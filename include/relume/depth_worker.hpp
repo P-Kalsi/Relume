@@ -21,6 +21,7 @@
 // fakes in tests).
 
 #include "relume/depth_estimator.hpp"
+#include "relume/depth_stabilizer.hpp"
 #include "relume/frame_queue.hpp"
 #include "relume/preprocess.hpp"
 #include "relume/stats.hpp"
@@ -65,6 +66,11 @@ struct DepthResult {
   ResizeTransform transform;            // includes the source size
   std::vector<float> depth;             // raw model output, 448x448 row-major
   DisplayRange range;
+  // Temporally stabilized, normalized depth (DepthStabilizer), 448x448 in
+  // the same layout; zeros when `stabilizer.bypassed`. `depth` is unchanged.
+  std::vector<float> stable;
+  StabilizerReport stabilizer;
+  double stabilize_ms = 0.0;
   double convert_ms = 0.0;     // camera frame -> RGB
   double preprocess_ms = 0.0;  // RGB -> tensor
   double run_ms = 0.0;         // the model
@@ -107,6 +113,9 @@ struct DepthWorkerConfig {
   int warmup_runs = 2;
   std::uint64_t generation = 0;  // set by InferenceController
   std::chrono::milliseconds wait_timeout{50};
+  // The initial stabilizer configuration. Not part of SameSettings: it can
+  // change while the worker runs (DepthWorker::SetStabilizer).
+  StabilizerConfig stabilizer;
 
   // Settings that need a new worker when they change.
   bool SameSettings(const DepthWorkerConfig& other) const;
@@ -159,6 +168,8 @@ class DepthWorker {
 
   const DepthWorkerConfig& config() const { return config_; }
   WorkerSnapshot snapshot() const;
+  // Thread-safe: used from the next result on (the stabilizer then resets).
+  void SetStabilizer(const StabilizerConfig& config);
 
   // Timings in ms, recorded by the worker; read and reset by the stats log.
   WideLatencyHistogram convert_ms;
@@ -182,6 +193,7 @@ class DepthWorker {
 
   mutable std::mutex mutex_;
   WorkerSnapshot snapshot_;
+  StabilizerConfig stabilizer_;  // guarded by mutex_
   IDepthEstimator* running_estimator_ = nullptr;  // for Terminate(); guarded by mutex_
 
   // Recycled results. A result returns to the pool when the last reference

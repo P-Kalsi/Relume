@@ -474,7 +474,7 @@ class Relighting {
 
     const DepthResult* result = depth.current();
     const bool usable = depth.Match(pipeline_) == DepthMatch::kMatch && result != nullptr && result->range.valid &&
-                        result->range.hi > result->range.lo;
+                        result->range.hi > result->range.lo && !result->stabilizer.bypassed;
     bool new_result = false;
     if (!usable) {
       if (has_result_) {
@@ -569,14 +569,15 @@ class Relighting {
 
   void PrintStats(double elapsed) {
     std::printf(
-        "[stats] relight: %s | %.1f relit frames/s | depth fields %llu (+%.1f/s) | snapshots %llu, hard cuts %llu, "
-        "resets %llu | crossfade %.0f ms | GPU relight p50 %.2f p95 %.2f ms, field p50 %.2f p95 %.2f ms "
-        "(unmeasured %llu) | encode p50 %.2f p95 %.2f ms\n",
+        "[stats] relight: %s | %.1f relit frames/s | depth fields %llu (+%.1f/s) | snapshots %llu, hard cuts %llu "
+        "(scene changes %llu), resets %llu | crossfade %.0f ms | stabilize p50 %.2f p95 %.2f ms | GPU relight p50 "
+        "%.2f p95 %.2f ms, field p50 %.2f p95 %.2f ms (unmeasured %llu) | encode p50 %.2f p95 %.2f ms\n",
         relit_ ? "relit" : (view_.active ? "bypassed" : "passthrough"),
         static_cast<double>(relit_frames_ - last_relit_frames_) / elapsed, static_cast<unsigned long long>(fields_),
         static_cast<double>(fields_ - last_fields_) / elapsed,
         static_cast<unsigned long long>(crossfade_.snapshots()), static_cast<unsigned long long>(crossfade_.hard_cuts()),
-        static_cast<unsigned long long>(crossfade_.resets()), crossfade_.duration_s() * 1000.0,
+        static_cast<unsigned long long>(scene_changes_), static_cast<unsigned long long>(crossfade_.resets()),
+        crossfade_.duration_s() * 1000.0, stabilize_ms_.Percentile(0.5), stabilize_ms_.Percentile(0.95),
         relight_timer_.ms().Percentile(0.5), relight_timer_.ms().Percentile(0.95), field_timer_.ms().Percentile(0.5),
         field_timer_.ms().Percentile(0.95),
         static_cast<unsigned long long>(relight_timer_.unmeasured() + field_timer_.unmeasured()),
@@ -586,21 +587,25 @@ class Relighting {
     relight_timer_.ms().Reset();
     field_timer_.ms().Reset();
     encode_ms_.Reset();
+    stabilize_ms_.Reset();
   }
 
  private:
   void Apply(const DepthResult& result, double now_s) {
-    const CrossfadeState::Update u = crossfade_.OnResult(now_s, /*hard_cut=*/false);
+    // The stabilizer restarted its history (a new configuration) or could
+    // not trust its fit (a scene change): no blend with the previous field.
+    const bool hard_cut = result.stabilizer.reset;
+    scene_changes_ += result.stabilizer.scene_change ? 1 : 0;
+    stabilize_ms_.Record(result.stabilize_ms);
+    const CrossfadeState::Update u = crossfade_.OnResult(now_s, hard_cut);
     if (u.snapshot_slot != CrossfadeState::kNone) {
       pass_.Blend(slots_[static_cast<std::size_t>(u.snapshot_from)], slots_[static_cast<std::size_t>(u.snapshot_to)],
                   u.snapshot_t, slots_[static_cast<std::size_t>(u.snapshot_slot)]);
     }
-    // Normalized height: the worker's 2nd-98th percentile range -> [0, 1].
-    const float scale = 1.0f / (result.range.hi - result.range.lo);
-    const float offset = -result.range.lo * scale;
+    // The stabilized depth is already normalized (about 0..1).
     const float aspect = static_cast<float>(result.transform.src_w) / static_cast<float>(result.transform.src_h);
-    uploader_.Upload(result.depth.data(), result.transform);
-    pass_.Build(uploader_, scale, offset, aspect, slots_[static_cast<std::size_t>(u.build_slot)]);
+    uploader_.Upload(result.stable.data(), result.transform);
+    pass_.Build(uploader_, 1.0f, 0.0f, aspect, slots_[static_cast<std::size_t>(u.build_slot)]);
     ++fields_;
     has_result_ = true;
     worker_generation_ = result.worker_generation;
@@ -655,7 +660,9 @@ class Relighting {
 
   std::uint64_t fields_ = 0, last_fields_ = 0;
   std::uint64_t relit_frames_ = 0, last_relit_frames_ = 0;
+  std::uint64_t scene_changes_ = 0;
   LatencyHistogram encode_ms_;
+  LatencyHistogram stabilize_ms_;  // measured on the worker, recorded here per result used
 };
 
 // A label that never presents old depth as current: "in sync" only when the
@@ -1590,6 +1597,14 @@ int RunWindowed(const AppOptions& options) {
       if (actions.relight->bypass != relight_controls.bypass || actions.relight->crossfade != relight_controls.crossfade) {
         std::printf("[relight] bypass %s, crossfade %s\n", actions.relight->bypass ? "on" : "off",
                     actions.relight->crossfade ? "on" : "off");
+      }
+      if (actions.relight->align != relight_controls.align || actions.relight->ema != relight_controls.ema) {
+        StabilizerConfig stabilizer;
+        stabilizer.align = actions.relight->align;
+        stabilizer.ema = actions.relight->ema;
+        inference.SetStabilizer(stabilizer);  // the worker keeps running
+        std::printf("[relight] stabilizer: align %s, EMA %s\n", stabilizer.align ? "on" : "off",
+                    stabilizer.ema ? "on" : "off");
       }
       relight_controls = *actions.relight;
     }

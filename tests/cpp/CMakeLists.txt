@@ -34,3 +34,4 @@ relume_add_gtest(test_relight_gpu SOURCES test_relight_gpu.cpp LIBS relume_rende
 relume_add_gtest(test_test_guide SOURCES test_test_guide.cpp LIBS relume_core)
 relume_add_gtest(test_lighting_math SOURCES test_lighting_math.cpp LIBS relume_core)
 relume_add_gtest(test_crossfade SOURCES test_crossfade.cpp LIBS relume_core)
+relume_add_gtest(test_depth_stabilizer SOURCES test_depth_stabilizer.cpp LIBS relume_core)

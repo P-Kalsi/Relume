@@ -439,6 +439,42 @@ TEST(DepthWorker, ResultsRecordTheirCameraGeneration) {
   EXPECT_TRUE(next->range.valid);
 }
 
+// The worker stabilizes each result (the raw depth stays as it was), and a
+// new stabilizer configuration takes effect without restarting the worker.
+TEST(DepthWorker, ResultsCarryStabilizedDepthAndTheConfigChangesLive) {
+  FakeCounters counters;
+  FakeBehaviour behaviour;
+  FramePool pool(4);
+  LatestFrameSlot frames;
+  LatestDepthSlot depth;
+  DepthWorker worker(Config(), FakeFactory(behaviour, counters), frames, depth);
+  frames.Publish(RgbFrame(pool, 1));
+  std::shared_ptr<const DepthResult> first;
+  ASSERT_TRUE(WaitFor([&] { return (first = depth.TakeIfNew(0, 0)) != nullptr; }));
+  ASSERT_EQ(first->stable.size(), kNetDepthFloats);
+  EXPECT_TRUE(first->stabilizer.reset) << "the first result starts the history";
+  EXPECT_FALSE(first->stabilizer.bypassed);
+  // Raw output is i % 448 (the fake); stable is its percentile normalization.
+  EXPECT_EQ(first->depth[5], 5.0f);
+  const float expected = (5.0f - first->range.lo) / (first->range.hi - first->range.lo);
+  EXPECT_NEAR(first->stable[5], expected, 1e-6f);
+
+  frames.Publish(RgbFrame(pool, 2));
+  std::shared_ptr<const DepthResult> second;
+  ASSERT_TRUE(WaitFor([&] { return (second = depth.TakeIfNew(0, first->sequence)) != nullptr; }));
+  EXPECT_FALSE(second->stabilizer.reset);
+
+  StabilizerConfig off;
+  off.align = false;
+  off.ema = false;
+  worker.SetStabilizer(off);
+  frames.Publish(RgbFrame(pool, 3));
+  std::shared_ptr<const DepthResult> third;
+  ASSERT_TRUE(WaitFor([&] { return (third = depth.TakeIfNew(0, second->sequence)) != nullptr; }));
+  EXPECT_TRUE(third->stabilizer.reset) << "a new configuration restarts the history";
+  EXPECT_EQ(counters.created.load(), 1) << "no new estimator (session) for a stabilizer change";
+}
+
 TEST(DepthMatch, RejectsDepthFromAnotherCameraSizeOrTransform) {
   DepthResult result;
   result.camera_generation = 3;
