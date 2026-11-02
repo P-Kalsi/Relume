@@ -18,6 +18,7 @@
 //   - every texture on the colour path is a non-sRGB format (no automatic
 //     conversion).
 
+#include "relume/crossfade.hpp"
 #include "relume/image_io.hpp"
 #include "relume/layout.hpp"
 #include "relume/lighting.hpp"
@@ -494,6 +495,90 @@ TEST_F(RelightGpuTest, BlendSnapshotMatchesTheCpuLerpAndRefusesAliasing) {
   EXPECT_LE(worst, 2e-3f);
   EXPECT_FALSE(pass.Blend(a, b, 0.5f, a));
   EXPECT_FALSE(pass.Blend(a, b, 0.5f, b));
+}
+
+// The three-slot crossfade on real textures: a sequence of results (regular,
+// overlapping, a burst, a hard cut) whose GPU work is submitted back to back
+// with no wait in between. After each step the shown field (mix(from, to,
+// blend)) is captured into its own texture; one wait at the end, then every
+// capture must equal the CPU model. Each result has constant depth, so a
+// field's height is that constant and the model is one number per slot.
+TEST_F(RelightGpuTest, CrossfadeSlotsNeverOverwriteWhatIsStillRead) {
+  const ResizeTransform t = *ComputeTransform(64, 36, ResizeMethod::kStretch);
+  DepthUploader uploader(*gpu_);
+  NormalPass pass(*gpu_);
+  std::vector<std::unique_ptr<DepthFieldTexture>> slots;
+  for (int i = 0; i < CrossfadeState::kSlots; ++i) {
+    slots.push_back(std::make_unique<DepthFieldTexture>(*gpu_));
+  }
+  std::vector<std::unique_ptr<DepthFieldTexture>> captures;
+  std::vector<float> expected;
+  std::array<float, CrossfadeState::kSlots> model{};
+  CrossfadeState state;
+  std::vector<float> depth(kNetDepthFloats);
+
+  const auto capture = [&](double now) {
+    const CrossfadeState::View v = state.Advance(now, 0.0);
+    ASSERT_TRUE(v.active);
+    captures.push_back(std::make_unique<DepthFieldTexture>(*gpu_));
+    const auto from = static_cast<std::size_t>(v.from);
+    const auto to = static_cast<std::size_t>(v.to);
+    ASSERT_TRUE(pass.Blend(*slots[from], *slots[to], v.blend, *captures.back()));
+    expected.push_back(model[from] + (model[to] - model[from]) * v.blend);
+  };
+  const auto result = [&](double now, float h, bool cut) {
+    const CrossfadeState::View before = state.Advance(now, 0.0);
+    const CrossfadeState::Update u = state.OnResult(now, cut);
+    int from = before.active ? before.from : CrossfadeState::kNone;
+    const int to = before.active ? before.to : CrossfadeState::kNone;
+    if (u.snapshot_slot != CrossfadeState::kNone) {
+      ASSERT_NE(u.snapshot_slot, from);
+      ASSERT_NE(u.snapshot_slot, to);
+      const auto s = static_cast<std::size_t>(u.snapshot_slot);
+      ASSERT_TRUE(pass.Blend(*slots[static_cast<std::size_t>(u.snapshot_from)],
+                             *slots[static_cast<std::size_t>(u.snapshot_to)], u.snapshot_t, *slots[s]));
+      model[s] = model[static_cast<std::size_t>(u.snapshot_from)] +
+                 (model[static_cast<std::size_t>(u.snapshot_to)] - model[static_cast<std::size_t>(u.snapshot_from)]) *
+                     u.snapshot_t;
+      from = u.snapshot_slot;
+    }
+    ASSERT_NE(u.build_slot, from);
+    ASSERT_NE(u.build_slot, to);
+    std::fill(depth.begin(), depth.end(), h);
+    ASSERT_TRUE(uploader.Upload(depth.data(), t));  // reuses one texture: queue order keeps it safe
+    ASSERT_TRUE(pass.Build(uploader, 1.0f, 0.0f, Aspect(t), *slots[static_cast<std::size_t>(u.build_slot)]));
+    model[static_cast<std::size_t>(u.build_slot)] = h;
+  };
+
+  const double dt = 1.0 / 7.0;
+  result(0.0, 0.1f, false);
+  capture(0.0);
+  result(dt, 0.5f, false);  // crossfade 0.1 -> 0.5
+  capture(dt + 0.02);
+  result(dt + 0.03, 0.9f, false);  // overlap: snapshot
+  capture(dt + 0.03);
+  capture(dt + 0.05);
+  for (int i = 0; i < 3; ++i) {  // a burst inside one crossfade
+    result(dt + 0.06 + 0.005 * i, 0.2f + 0.1f * static_cast<float>(i), false);
+    capture(dt + 0.06 + 0.005 * i + 0.002);
+  }
+  result(0.5, 1.2f, true);  // hard cut
+  capture(0.5);
+  result(0.5 + dt, 0.0f, false);
+  capture(0.5 + dt + 0.01);
+  capture(1.5);
+
+  ASSERT_TRUE(gpu_->WaitIdle());  // the only wait
+  ASSERT_EQ(captures.size(), expected.size());
+  for (std::size_t i = 0; i < captures.size(); ++i) {
+    std::vector<float> f;
+    ASSERT_TRUE(ReadbackFieldTexture(*gpu_, *captures[i], f));
+    float worst = 0.0f;
+    for (std::size_t j = 2; j < f.size(); j += 4) {
+      worst = std::max(worst, std::abs(f[j] - expected[i]));
+    }
+    EXPECT_LE(worst, 2e-3f) << "capture " << i << ": expected height " << expected[i];
+  }
 }
 
 TEST_F(RelightGpuTest, RenderRefusesMissingOrMismatchedFields) {
