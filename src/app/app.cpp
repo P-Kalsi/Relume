@@ -5,6 +5,7 @@
 #include "platform/window_state.hpp"
 #include "relume/app_state.hpp"
 #include "relume/camera.hpp"
+#include "relume/crossfade.hpp"
 #include "relume/event_queue.hpp"
 #include "relume/frame_queue.hpp"
 #include "relume/guided_capture.hpp"
@@ -255,7 +256,8 @@ class StatsLogger {
   void Maybe(Clock::time_point now, const ICameraSource* source, const LatestFrameSlot& slot,
              const VideoPipeline& pipeline, const WindowPresenter* output = nullptr,
              const WindowPresenter* controls = nullptr, InferenceController* inference = nullptr,
-             DepthTracker* depth = nullptr, const LatestDepthSlot* depth_slot = nullptr) {
+             DepthTracker* depth = nullptr, const LatestDepthSlot* depth_slot = nullptr,
+             const std::function<void(double)>& more = {}) {
     const double elapsed = Seconds(now - last_);
     if (interval_s_ <= 0.0 || elapsed < interval_s_) {
       return;
@@ -295,6 +297,9 @@ class StatsLogger {
     }
     if (inference != nullptr && depth != nullptr && depth_slot != nullptr) {
       PrintDepth(elapsed, *inference, *depth, *depth_slot, pipeline);
+    }
+    if (more) {
+      more(elapsed);
     }
     std::fflush(stdout);
     last_ = now;
@@ -371,12 +376,16 @@ class DepthView {
     visualizer_.Clear();
   }
 
+  // Another view drew into the texture: redraw (or clear) on the next Update.
+  void Invalidate() { stale_ = true; }
+
   void Update(const DepthTracker& depth, const VideoPipeline& pipeline, bool overlay) {
     const DepthResult* result = depth.current();
     if (depth.Match(pipeline) != DepthMatch::kMatch) {
-      if (showing_) {
+      if (showing_ || stale_) {
         visualizer_.Clear();
         showing_ = false;
+        stale_ = false;
       }
       return;
     }
@@ -398,7 +407,7 @@ class DepthView {
     }
     // Redraw for new depth, a new camera frame (the overlay shows it) or an
     // overlay change.
-    if (new_result || pipeline.composed != composed_ || overlay != overlay_ || !showing_) {
+    if (new_result || pipeline.composed != composed_ || overlay != overlay_ || !showing_ || stale_) {
       DepthVisParams params;
       params.lo = range_.lo;
       params.hi = range_.hi;
@@ -408,6 +417,7 @@ class DepthView {
       composed_ = pipeline.composed;
       overlay_ = overlay;
       showing_ = true;
+      stale_ = false;
     }
   }
 
@@ -423,6 +433,229 @@ class DepthView {
   std::uint64_t composed_ = 0;
   bool overlay_ = false;
   bool showing_ = false;
+  bool stale_ = false;
+};
+
+// Relighting of the output (Phase 4). Runs on the main thread after the
+// camera frame is composed and the newest depth taken:
+//   - matching depth (same camera, size, transform; valid range) is
+//     normalized, built into a depth field in one of three slots, and
+//     crossfaded in as CrossfadeState decides (docs/architecture.md);
+//   - anything that does not match resets to passthrough at once, never
+//     relighting with another camera's or worker's depth;
+//   - the relit image overwrites the passthrough OutputTexture whenever the
+//     frame, the depth, the crossfade, the fade or a control changed.
+// Bypass shows passthrough while the depth fields stay current, for A/B
+// comparisons. Nothing here waits for the GPU, the camera or the worker.
+class Relighting {
+ public:
+  Relighting(const GpuContext& gpu, VideoPipeline& pipeline)
+      : gpu_(gpu),
+        pipeline_(pipeline),
+        uploader_(gpu),
+        pass_(gpu),
+        relighter_(gpu, pipeline.output),
+        slots_{DepthFieldTexture(gpu), DepthFieldTexture(gpu), DepthFieldTexture(gpu)},
+        field_timer_(gpu),
+        relight_timer_(gpu),
+        origin_(Clock::now()) {
+    pass_.set_timer(&field_timer_);
+    relighter_.set_timer(&relight_timer_);
+  }
+
+  // `debug` is the Controls window's right-hand view, drawn here when a
+  // lighting debug view is selected. Returns true if it drew (or cleared) it.
+  bool Update(const DepthTracker& depth, const RelightControls& controls, Clock::time_point now,
+              const DepthDebugTexture& debug) {
+    const double now_s = Seconds(now - origin_);
+    CrossfadeConfig config = crossfade_.config();
+    config.enabled = controls.crossfade;
+    crossfade_.SetConfig(config);  // a change of `enabled` resets
+
+    const DepthResult* result = depth.current();
+    const bool usable = depth.Match(pipeline_) == DepthMatch::kMatch && result != nullptr && result->range.valid &&
+                        result->range.hi > result->range.lo;
+    bool new_result = false;
+    if (!usable) {
+      if (has_result_) {
+        crossfade_.Reset();  // passthrough at once
+        has_result_ = false;
+      }
+    } else if (!has_result_ || result->worker_generation != worker_generation_ ||
+               result->sequence != sequence_) {
+      // Another worker, camera or transform: never blend with that history.
+      if (has_result_ && (result->worker_generation != worker_generation_ ||
+                          result->camera_generation != camera_generation_ || !(result->transform == transform_))) {
+        crossfade_.Reset();
+      }
+      Apply(*result, now_s);
+      new_result = true;
+    }
+
+    const double age_s = has_result_ ? Seconds(now - arrival_) : 0.0;
+    view_ = crossfade_.Advance(now_s, age_s);
+    RelightFrame frame;
+    if (view_.active) {
+      frame.from = &slots_[static_cast<std::size_t>(view_.from)];
+      frame.to = &slots_[static_cast<std::size_t>(view_.to)];
+      frame.blend = view_.blend;
+      frame.fade = view_.fade;
+      frame.light = controls.light;
+    }
+    const bool changed = new_result || pipeline_.composed != composed_ || view_.blend != blend_ ||
+                         view_.fade != fade_ || !(controls.light == light_);
+
+    // The output.
+    const bool want_relit = view_.active && !controls.bypass && pipeline_.showing_video;
+    if (want_relit && (changed || !relit_)) {
+      const Clock::time_point start = Clock::now();
+      relit_ = relighter_.Render(pipeline_.uploader.camera_texture(), frame);
+      encode_ms_.Record(std::chrono::duration<double, std::milli>(Clock::now() - start).count());
+      ++relit_frames_;
+    } else if (!want_relit && relit_) {
+      // Back to passthrough without waiting for the next camera frame.
+      if (pipeline_.showing_video) {
+        pipeline_.compositor.Compose(pipeline_.uploader.camera_texture());
+      }
+      relit_ = false;
+    }
+
+    // The Controls window's lighting debug view.
+    const int view_index = std::clamp(controls.view, 0, static_cast<int>(std::size(kRelightViews)) - 1);
+    const std::optional<RelightView> debug_view = kRelightViews[view_index].view;
+    bool drew_debug = false;
+    if (debug_view) {
+      if (view_.active && pipeline_.showing_video) {
+        if (changed || !debug_shown_ || debug_view != debug_view_) {
+          debug_shown_ = relighter_.RenderDebug(pipeline_.uploader.camera_texture(), frame, *debug_view, debug);
+        }
+      } else if (debug_shown_ || debug_view != debug_view_) {
+        ClearDebug(debug);
+      }
+      drew_debug = true;
+    } else {
+      debug_shown_ = false;
+    }
+    debug_view_ = debug_view;
+    composed_ = pipeline_.composed;
+    blend_ = view_.blend;
+    fade_ = view_.fade;
+    light_ = controls.light;
+    return drew_debug;
+  }
+
+  bool relit() const { return relit_; }
+  // For the Controls window.
+  std::string Label(const InferenceStatus& inference, const RelightControls& controls) const {
+    char text[160];
+    if (!pipeline_.showing_video) {
+      return "passthrough: no camera image";
+    }
+    if (!view_.active) {
+      if (inference.state == InferenceState::kLoading) {
+        return "passthrough: waits for depth (" + inference.label + ")";
+      }
+      if (inference.state == InferenceState::kOff || inference.state == InferenceState::kError) {
+        return "passthrough: no depth (" + inference.label + ")";
+      }
+      return "passthrough: waiting for matching depth";
+    }
+    std::snprintf(text, sizeof(text), "%s%s | fade %.2f | crossfade %s (%.0f ms) | relit p50 %.2f ms GPU",
+                  controls.bypass ? "bypassed (showing passthrough)" : "relit",
+                  crossfade_.stale() ? " | depth stale (> 1 s): fading out" : "", static_cast<double>(view_.fade),
+                  controls.crossfade ? "on" : "off", crossfade_.duration_s() * 1000.0, relight_timer_.ms().Percentile(0.5));
+    return text;
+  }
+
+  void PrintStats(double elapsed) {
+    std::printf(
+        "[stats] relight: %s | %.1f relit frames/s | depth fields %llu (+%.1f/s) | snapshots %llu, hard cuts %llu, "
+        "resets %llu | crossfade %.0f ms | GPU relight p50 %.2f p95 %.2f ms, field p50 %.2f p95 %.2f ms "
+        "(unmeasured %llu) | encode p50 %.2f p95 %.2f ms\n",
+        relit_ ? "relit" : (view_.active ? "bypassed" : "passthrough"),
+        static_cast<double>(relit_frames_ - last_relit_frames_) / elapsed, static_cast<unsigned long long>(fields_),
+        static_cast<double>(fields_ - last_fields_) / elapsed,
+        static_cast<unsigned long long>(crossfade_.snapshots()), static_cast<unsigned long long>(crossfade_.hard_cuts()),
+        static_cast<unsigned long long>(crossfade_.resets()), crossfade_.duration_s() * 1000.0,
+        relight_timer_.ms().Percentile(0.5), relight_timer_.ms().Percentile(0.95), field_timer_.ms().Percentile(0.5),
+        field_timer_.ms().Percentile(0.95),
+        static_cast<unsigned long long>(relight_timer_.unmeasured() + field_timer_.unmeasured()),
+        encode_ms_.Percentile(0.5), encode_ms_.Percentile(0.95));
+    last_relit_frames_ = relit_frames_;
+    last_fields_ = fields_;
+    relight_timer_.ms().Reset();
+    field_timer_.ms().Reset();
+    encode_ms_.Reset();
+  }
+
+ private:
+  void Apply(const DepthResult& result, double now_s) {
+    const CrossfadeState::Update u = crossfade_.OnResult(now_s, /*hard_cut=*/false);
+    if (u.snapshot_slot != CrossfadeState::kNone) {
+      pass_.Blend(slots_[static_cast<std::size_t>(u.snapshot_from)], slots_[static_cast<std::size_t>(u.snapshot_to)],
+                  u.snapshot_t, slots_[static_cast<std::size_t>(u.snapshot_slot)]);
+    }
+    // Normalized height: the worker's 2nd-98th percentile range -> [0, 1].
+    const float scale = 1.0f / (result.range.hi - result.range.lo);
+    const float offset = -result.range.lo * scale;
+    const float aspect = static_cast<float>(result.transform.src_w) / static_cast<float>(result.transform.src_h);
+    uploader_.Upload(result.depth.data(), result.transform);
+    pass_.Build(uploader_, scale, offset, aspect, slots_[static_cast<std::size_t>(u.build_slot)]);
+    ++fields_;
+    has_result_ = true;
+    worker_generation_ = result.worker_generation;
+    camera_generation_ = result.camera_generation;
+    sequence_ = result.sequence;
+    transform_ = result.transform;
+    arrival_ = result.arrival_time;
+  }
+
+  void ClearDebug(const DepthDebugTexture& debug) {
+    wgpu::RenderPassColorAttachment attachment{};
+    attachment.view = debug.view();
+    attachment.loadOp = wgpu::LoadOp::Clear;
+    attachment.storeOp = wgpu::StoreOp::Store;
+    attachment.clearValue = {0.0, 0.0, 0.0, 1.0};
+    wgpu::RenderPassDescriptor desc{};
+    desc.colorAttachmentCount = 1;
+    desc.colorAttachments = &attachment;
+    const wgpu::CommandEncoder encoder = gpu_.device().CreateCommandEncoder();
+    encoder.BeginRenderPass(&desc).End();
+    const wgpu::CommandBuffer commands = encoder.Finish();
+    gpu_.queue().Submit(1, &commands);
+    debug_shown_ = false;
+  }
+
+  const GpuContext& gpu_;
+  VideoPipeline& pipeline_;
+  DepthUploader uploader_;
+  NormalPass pass_;
+  Relighter relighter_;
+  std::array<DepthFieldTexture, CrossfadeState::kSlots> slots_;
+  GpuTimer field_timer_;
+  GpuTimer relight_timer_;
+  CrossfadeState crossfade_;
+  Clock::time_point origin_;
+  CrossfadeState::View view_;
+
+  bool has_result_ = false;
+  std::uint64_t worker_generation_ = 0;
+  std::uint64_t camera_generation_ = 0;
+  std::uint64_t sequence_ = 0;
+  ResizeTransform transform_;
+  Clock::time_point arrival_{};
+
+  bool relit_ = false;
+  bool debug_shown_ = false;
+  std::optional<RelightView> debug_view_;
+  std::uint64_t composed_ = 0;
+  float blend_ = -1.0f;
+  float fade_ = -1.0f;
+  LightSettings light_;
+
+  std::uint64_t fields_ = 0, last_fields_ = 0;
+  std::uint64_t relit_frames_ = 0, last_relit_frames_ = 0;
+  LatencyHistogram encode_ms_;
 };
 
 // A label that never presents old depth as current: "in sync" only when the
@@ -606,6 +839,54 @@ int RunHeadless(const AppOptions& options) {
   }
   std::printf("Output texture: %ux%u RGBA8\n", pipeline.output.texture().GetWidth(),
               pipeline.output.texture().GetHeight());
+
+  // With matching depth: relight it into a separate OutputTexture (the
+  // checks below need the passthrough output). Neutral settings must equal
+  // passthrough within 1, default lighting must change the image, and the
+  // bars must stay black.
+  if (inference_config && depth.Match(pipeline) == DepthMatch::kMatch && depth.current()->range.valid) {
+    const DepthResult& result = *depth.current();
+    DepthUploader uploader(*gpu);
+    NormalPass pass(*gpu);
+    DepthFieldTexture field(*gpu);
+    const float scale = 1.0f / (result.range.hi - result.range.lo);
+    const float aspect = static_cast<float>(result.transform.src_w) / static_cast<float>(result.transform.src_h);
+    const bool built = uploader.Upload(result.depth.data(), result.transform) &&
+                       pass.Build(uploader, scale, -result.range.lo * scale, aspect, field);
+    OutputTexture relit_output(*gpu);
+    Relighter relighter(*gpu, relit_output);
+    RelightFrame frame;
+    frame.from = frame.to = &field;
+    frame.light = NeutralLightSettings();
+    std::vector<std::uint8_t> neutral, lit;
+    const bool rendered = built && relighter.Render(pipeline.uploader.camera_texture(), frame) &&
+                          ReadbackTexture(*gpu, relit_output.texture(), neutral);
+    frame.light = LightSettings{};
+    const bool rendered_lit = rendered && relighter.Render(pipeline.uploader.camera_texture(), frame) &&
+                              ReadbackTexture(*gpu, relit_output.texture(), lit);
+    int worst = 0;
+    std::size_t changed = 0;
+    bool bars_black = true;
+    const PixelRect fit = FitRect(pipeline.frame_width, pipeline.frame_height, OutputTexture::kWidth,
+                                  OutputTexture::kHeight);
+    if (rendered_lit) {
+      for (std::size_t i = 0; i < out.size(); ++i) {
+        worst = std::max(worst, std::abs(int{neutral[i]} - int{out[i]}));
+        changed += lit[i] != out[i] ? 1 : 0;
+      }
+      for (std::uint32_t y = 0; y < OutputTexture::kHeight; ++y) {
+        for (std::uint32_t x = 0; x < OutputTexture::kWidth; ++x) {
+          const bool inside = x >= fit.x && x < fit.x + fit.width && y >= fit.y && y < fit.y + fit.height;
+          const std::uint8_t* p = &lit[(std::size_t{y} * OutputTexture::kWidth + x) * 4];
+          bars_black = bars_black && (inside || (p[0] == 0 && p[1] == 0 && p[2] == 0));
+        }
+      }
+    }
+    const bool ok = rendered_lit && worst <= 1 && changed > 0 && bars_black;
+    std::printf("Relighting: neutral vs passthrough max %d; default light changed %zu values; bars %s: %s\n", worst,
+                changed, bars_black ? "black" : "NOT BLACK", ok ? "ok" : "FAILED");
+    failures += ok ? 0 : 1;
+  }
 
   const std::shared_ptr<const VideoFrame> last = slot.Latest();
   if (options.file.path.empty() && last) {
@@ -1054,6 +1335,8 @@ int RunWindowed(const AppOptions& options) {
               gpu->supports_timestamps() ? "yes" : "no");
   VideoPipeline pipeline(*gpu);
   DepthView depth_view(*gpu);
+  Relighting relighting(*gpu, pipeline);
+  RelightControls relight_controls;
   ControlWindow controls(*gpu, pipeline.output, options.presenter);
   CleanWindow output(*gpu, options.presenter);
   if (!controls.ok() || !output.ok()) {
@@ -1235,7 +1518,11 @@ int RunWindowed(const AppOptions& options) {
       std::fflush(stdout);
     }
     inference_status = next_inference;
-    depth_view.Update(depth, pipeline, depth_overlay);
+    if (relighting.Update(depth, relight_controls, Clock::now(), depth_view.texture)) {
+      depth_view.Invalidate();  // a lighting debug view is in the panel
+    } else {
+      depth_view.Update(depth, pipeline, depth_overlay);
+    }
     trace.Mark("compose");
     output.Render(pipeline.presenter);
     trace.Mark("output");
@@ -1262,6 +1549,12 @@ int RunWindowed(const AppOptions& options) {
     model.inference_choice = choice_index(inference_options);
     model.depth_view = &depth_view.texture;
     model.depth_overlay = depth_overlay;
+    model.relight = relight_controls;
+    model.relit = relighting.relit();
+    model.relight_label = relighting.Label(inference_status, relight_controls);
+    model.has_image = pipeline.showing_video;
+    model.image_rect = FitRect(pipeline.frame_width, pipeline.frame_height, OutputTexture::kWidth,
+                               OutputTexture::kHeight);
     if (inference.active() != nullptr) {
       model.depth_label = DepthLabel(depth, pipeline, Clock::now());
       const DepthWorker& worker = *inference.active();
@@ -1292,6 +1585,13 @@ int RunWindowed(const AppOptions& options) {
     }
     if (actions.toggle_depth_overlay) {
       depth_overlay = !depth_overlay;
+    }
+    if (actions.relight) {
+      if (actions.relight->bypass != relight_controls.bypass || actions.relight->crossfade != relight_controls.crossfade) {
+        std::printf("[relight] bypass %s, crossfade %s\n", actions.relight->bypass ? "on" : "off",
+                    actions.relight->crossfade ? "on" : "off");
+      }
+      relight_controls = *actions.relight;
     }
     if (actions.inference_choice) {
       const InferenceChoice& choice = kInferenceChoices[*actions.inference_choice];
@@ -1409,7 +1709,7 @@ int RunWindowed(const AppOptions& options) {
     last_iteration_end = now;
     stats.OnRender(now);
     stats.Maybe(now, capture.source(), slot, pipeline, output.presenter(), controls.presenter(), &inference, &depth,
-                &depth_slot);
+                &depth_slot, [&relighting](double elapsed) { relighting.PrintStats(elapsed); });
     if (gpu->errors().device_lost()) {
       std::fprintf(stderr, "FAIL: the GPU device was lost\n");
       exit_code = 1;

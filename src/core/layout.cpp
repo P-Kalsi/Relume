@@ -1,5 +1,7 @@
 #include "relume/layout.hpp"
 
+#include <algorithm>
+
 namespace relume {
 
 PixelRect FitRect(std::uint32_t src_width, std::uint32_t src_height, std::uint32_t dst_width,
@@ -25,6 +27,25 @@ PixelRect FitRect(std::uint32_t src_width, std::uint32_t src_height, std::uint32
   rect.x = (dst_width - rect.width) / 2;
   rect.y = (dst_height - rect.height) / 2;
   return rect;
+}
+
+ImageUv PreviewToImageUv(float screen_x, float screen_y, const PreviewGeometry& p) {
+  if (p.width <= 0.0f || p.height <= 0.0f || p.output_width == 0 || p.output_height == 0 || p.image.width == 0 ||
+      p.image.height == 0) {
+    return {0.5f, 0.5f};
+  }
+  // Screen -> output texture pixels -> image.
+  const float ox = (screen_x - p.x) / p.width * static_cast<float>(p.output_width);
+  const float oy = (screen_y - p.y) / p.height * static_cast<float>(p.output_height);
+  return {std::clamp((ox - static_cast<float>(p.image.x)) / static_cast<float>(p.image.width), 0.0f, 1.0f),
+          std::clamp((oy - static_cast<float>(p.image.y)) / static_cast<float>(p.image.height), 0.0f, 1.0f)};
+}
+
+void ImageUvToPreview(ImageUv uv, const PreviewGeometry& p, float& screen_x, float& screen_y) {
+  const float ox = static_cast<float>(p.image.x) + uv.u * static_cast<float>(p.image.width);
+  const float oy = static_cast<float>(p.image.y) + uv.v * static_cast<float>(p.image.height);
+  screen_x = p.output_width == 0 ? p.x : p.x + ox / static_cast<float>(p.output_width) * p.width;
+  screen_y = p.output_height == 0 ? p.y : p.y + oy / static_cast<float>(p.output_height) * p.height;
 }
 
 }  // namespace relume

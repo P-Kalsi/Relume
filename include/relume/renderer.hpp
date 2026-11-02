@@ -20,6 +20,7 @@
 
 #include "relume/lighting.hpp"
 #include "relume/preprocess.hpp"
+#include "relume/stats.hpp"
 #include "relume/video_frame.hpp"
 
 #include <webgpu/webgpu_cpp.h>
@@ -82,6 +83,49 @@ class GpuContext {
   std::string adapter_name_;
   bool supports_layer_presentation_ = false;
   bool supports_timestamps_ = false;
+};
+
+// GPU time of render passes, from timestamp queries, when the device has
+// TimestampQuery. Nothing waits: each measured pass resolves its two
+// timestamps into a small buffer that is mapped asynchronously, and the
+// result is recorded when Instance::ProcessEvents runs the callback (a few
+// frames later). If every slot is still in flight, the pass is not measured.
+// Dawn may quantize timestamps (its default); the values are what Dawn
+// reports.
+class GpuTimer {
+ public:
+  explicit GpuTimer(const GpuContext& gpu, std::size_t slots = 8);
+  ~GpuTimer();
+  GpuTimer(const GpuTimer&) = delete;
+  GpuTimer& operator=(const GpuTimer&) = delete;
+
+  bool available() const { return available_; }
+  // Pass time in ms, recorded on the thread that calls ProcessEvents.
+  LatencyHistogram& ms() { return state_->ms; }
+  const LatencyHistogram& ms() const { return state_->ms; }
+  std::uint64_t unmeasured() const { return state_->unmeasured; }
+
+  // For EncodeFitPass: timestamp writes for one pass, or null.
+  const wgpu::PassTimestampWrites* Begin();
+  void Resolve(const wgpu::CommandEncoder& encoder);
+  void Submitted();
+
+ private:
+  struct Slot {
+    wgpu::QuerySet queries;
+    wgpu::Buffer resolve;
+    wgpu::Buffer readback;
+    bool busy = false;
+  };
+  struct State {
+    LatencyHistogram ms;
+    std::uint64_t unmeasured = 0;
+    std::vector<Slot> slots;
+  };
+  bool available_ = false;
+  std::shared_ptr<State> state_;  // the map callbacks hold a weak_ptr
+  wgpu::PassTimestampWrites writes_{};
+  int current_ = -1;  // the slot between Begin and Submitted
 };
 
 // The fixed-size clean video output. Its size never follows any window.
@@ -279,9 +323,12 @@ class NormalPass {
   // out = mix(from, to, t), the field shown at weight t. `out` must be a
   // different texture from both inputs; the sizes must match.
   bool Blend(const DepthFieldTexture& from, const DepthFieldTexture& to, float t, DepthFieldTexture& out);
+  // Optional: measure Build passes (not owned; must outlive this object).
+  void set_timer(GpuTimer* timer) { timer_ = timer; }
 
  private:
   const GpuContext& gpu_;
+  GpuTimer* timer_ = nullptr;
   wgpu::BindGroupLayout build_layout_;
   wgpu::BindGroupLayout blend_layout_;
   wgpu::RenderPipeline build_pipeline_;
@@ -312,6 +359,8 @@ class Relighter {
   // A view of the same frame into the DepthDebugTexture (Controls only).
   bool RenderDebug(const wgpu::Texture& camera_texture, const RelightFrame& frame, RelightView view,
                    const DepthDebugTexture& target);
+  // Optional: measure Render passes (not owned; must outlive this object).
+  void set_timer(GpuTimer* timer) { timer_ = timer; }
 
  private:
   struct Target {
@@ -324,6 +373,7 @@ class Relighter {
 
   const GpuContext& gpu_;
   const OutputTexture& output_;
+  GpuTimer* timer_ = nullptr;
   wgpu::BindGroupLayout layout_;
   wgpu::RenderPipeline pipeline_;
   wgpu::Sampler sampler_;

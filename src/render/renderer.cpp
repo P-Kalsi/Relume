@@ -129,9 +129,9 @@ wgpu::BindGroup CreateBlitBindGroup(const wgpu::Device& device, const wgpu::Bind
 }
 
 // Clears `target` to black and, if `draw` is set, draws one full-viewport
-// triangle into `rect`.
+// triangle into `rect`. `timer`, if set, measures the pass.
 void EncodeFitPass(const GpuContext& gpu, const wgpu::TextureView& target, const wgpu::RenderPipeline* pipeline,
-                   const wgpu::BindGroup* bind_group, PixelRect rect) {
+                   const wgpu::BindGroup* bind_group, PixelRect rect, GpuTimer* timer = nullptr) {
   wgpu::RenderPassColorAttachment attachment{};
   attachment.view = target;
   attachment.loadOp = wgpu::LoadOp::Clear;
@@ -140,6 +140,8 @@ void EncodeFitPass(const GpuContext& gpu, const wgpu::TextureView& target, const
   wgpu::RenderPassDescriptor pass_desc{};
   pass_desc.colorAttachmentCount = 1;
   pass_desc.colorAttachments = &attachment;
+  const wgpu::PassTimestampWrites* writes = timer != nullptr ? timer->Begin() : nullptr;
+  pass_desc.timestampWrites = writes;
   const wgpu::CommandEncoder encoder = gpu.device().CreateCommandEncoder();
   const wgpu::RenderPassEncoder pass = encoder.BeginRenderPass(&pass_desc);
   if (pipeline != nullptr && rect.width > 0 && rect.height > 0) {
@@ -150,8 +152,14 @@ void EncodeFitPass(const GpuContext& gpu, const wgpu::TextureView& target, const
     pass.Draw(3);
   }
   pass.End();
+  if (writes != nullptr) {
+    timer->Resolve(encoder);
+  }
   const wgpu::CommandBuffer commands = encoder.Finish();
   gpu.queue().Submit(1, &commands);
+  if (writes != nullptr) {
+    timer->Submitted();
+  }
 }
 
 }  // namespace
@@ -273,6 +281,82 @@ bool GpuContext::WaitIdle() {
                                  }),
       UINT64_MAX);
   return wait == wgpu::WaitStatus::Success && done;
+}
+
+// --- GpuTimer ---
+
+GpuTimer::GpuTimer(const GpuContext& gpu, std::size_t slots)
+    : available_(gpu.supports_timestamps()), state_(std::make_shared<State>()) {
+  if (!available_) {
+    return;
+  }
+  for (std::size_t i = 0; i < slots; ++i) {
+    Slot slot;
+    wgpu::QuerySetDescriptor query_desc{};
+    query_desc.type = wgpu::QueryType::Timestamp;
+    query_desc.count = 2;
+    slot.queries = gpu.device().CreateQuerySet(&query_desc);
+    wgpu::BufferDescriptor resolve_desc{};
+    resolve_desc.size = 16;
+    resolve_desc.usage = wgpu::BufferUsage::QueryResolve | wgpu::BufferUsage::CopySrc;
+    slot.resolve = gpu.device().CreateBuffer(&resolve_desc);
+    wgpu::BufferDescriptor readback_desc{};
+    readback_desc.size = 16;
+    readback_desc.usage = wgpu::BufferUsage::MapRead | wgpu::BufferUsage::CopyDst;
+    slot.readback = gpu.device().CreateBuffer(&readback_desc);
+    state_->slots.push_back(std::move(slot));
+  }
+}
+
+GpuTimer::~GpuTimer() = default;  // pending callbacks see the expired weak_ptr
+
+const wgpu::PassTimestampWrites* GpuTimer::Begin() {
+  current_ = -1;
+  if (!available_) {
+    return nullptr;
+  }
+  for (std::size_t i = 0; i < state_->slots.size(); ++i) {
+    if (!state_->slots[i].busy) {
+      current_ = static_cast<int>(i);
+      writes_.querySet = state_->slots[i].queries;
+      writes_.beginningOfPassWriteIndex = 0;
+      writes_.endOfPassWriteIndex = 1;
+      return &writes_;
+    }
+  }
+  ++state_->unmeasured;
+  return nullptr;
+}
+
+void GpuTimer::Resolve(const wgpu::CommandEncoder& encoder) {
+  const Slot& slot = state_->slots[static_cast<std::size_t>(current_)];
+  encoder.ResolveQuerySet(slot.queries, 0, 2, slot.resolve, 0);
+  encoder.CopyBufferToBuffer(slot.resolve, 0, slot.readback, 0, 16);
+}
+
+void GpuTimer::Submitted() {
+  const auto index = static_cast<std::size_t>(current_);
+  current_ = -1;
+  Slot& slot = state_->slots[index];
+  slot.busy = true;
+  std::weak_ptr<State> weak = state_;
+  slot.readback.MapAsync(wgpu::MapMode::Read, 0, 16, wgpu::CallbackMode::AllowProcessEvents,
+                         [weak, index](wgpu::MapAsyncStatus status, wgpu::StringView) {
+                           const std::shared_ptr<State> state = weak.lock();
+                           if (!state) {
+                             return;
+                           }
+                           Slot& s = state->slots[index];
+                           if (status == wgpu::MapAsyncStatus::Success) {
+                             std::uint64_t ticks[2] = {};
+                             std::memcpy(ticks, s.readback.GetConstMappedRange(0, 16), sizeof(ticks));
+                             if (ticks[1] >= ticks[0]) {
+                               state->ms.Record(static_cast<double>(ticks[1] - ticks[0]) / 1e6);
+                             }
+                             s.readback.Unmap();
+                           }
+                           s.busy = false;
+                         });
 }
 
 // --- OutputTexture ---
@@ -624,7 +708,7 @@ bool NormalPass::Build(const DepthUploader& depth, float scale, float offset, fl
   desc.entryCount = entries.size();
   desc.entries = entries.data();
   const wgpu::BindGroup bind_group = gpu_.device().CreateBindGroup(&desc);
-  EncodeFitPass(gpu_, out.view(), &build_pipeline_, &bind_group, PixelRect{0, 0, width, height});
+  EncodeFitPass(gpu_, out.view(), &build_pipeline_, &bind_group, PixelRect{0, 0, width, height}, timer_);
   return true;
 }
 
@@ -736,7 +820,7 @@ bool Relighter::Draw(Target& target, const wgpu::TextureView& view, const wgpu::
   gpu_.queue().WriteBuffer(target.params, 0, values.data(), sizeof(values));
   const PixelRect rect = FitRect(camera_texture.GetWidth(), camera_texture.GetHeight(), OutputTexture::kWidth,
                                  OutputTexture::kHeight);
-  EncodeFitPass(gpu_, view, &pipeline_, &target.bind_group, rect);
+  EncodeFitPass(gpu_, view, &pipeline_, &target.bind_group, rect, &target == &output_target_ ? timer_ : nullptr);
   return true;
 }
 

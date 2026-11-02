@@ -11,6 +11,8 @@
 #include "relume/camera.hpp"
 #include "relume/guided_capture.hpp"
 #include "relume/inference_controller.hpp"
+#include "relume/layout.hpp"
+#include "relume/lighting.hpp"
 #include "relume/renderer.hpp"
 #include "relume/test_guide.hpp"
 
@@ -19,6 +21,29 @@
 #include <vector>
 
 namespace relume {
+
+// Phase 4 engineering controls for relighting. They are drawn only in the
+// Controls window; the Output window never shows a control or marker.
+struct RelightControls {
+  LightSettings light;
+  bool bypass = false;     // A/B: show camera passthrough (relighting keeps running)
+  bool crossfade = true;   // temporal stage C: crossfade between depth results
+  int view = 0;            // index into kRelightViews: what the right-hand panel shows
+  bool operator==(const RelightControls&) const = default;
+};
+
+struct RelightViewChoice {
+  const char* label;
+  const char* caption;
+  std::optional<RelightView> view;  // nullopt: the raw depth view (DepthVisualizer)
+};
+inline constexpr RelightViewChoice kRelightViews[] = {
+    {"Depth", "Depth (brighter = nearer)", std::nullopt},
+    {"Height (normalized)", "Normalized height used for lighting (brighter = nearer)", RelightView::kHeight},
+    {"Normals", "Surface normals (x red, y green, z blue)", RelightView::kNormals},
+    {"Lighting gain", "Lighting gain (mid grey = 1)", RelightView::kGain},
+    {"Normal confidence", "Normal confidence (dark = depth edge)", RelightView::kConfidence},
+};
 
 // What the Controls window displays this frame.
 struct ControlsModel {
@@ -41,6 +66,13 @@ struct ControlsModel {
   bool depth_overlay = false;
 
   const TestGuide* test_guide = nullptr;  // --test-guide only: timed steps for a manual test
+
+  // Relighting.
+  RelightControls relight;
+  std::string relight_label;  // e.g. "relit (fade 1.00)" or why it is passthrough
+  bool relit = false;         // the output currently shows relighting
+  bool has_image = false;     // a camera image is shown (the light can be placed)
+  PixelRect image_rect;       // the camera image inside the OutputTexture
 };
 
 // The inference settings offered in the Controls window.
@@ -67,6 +99,7 @@ struct ControlsActions {
   std::optional<int> inference_choice;       // a new entry of kInferenceChoices
   bool toggle_depth_overlay = false;
   bool test_guide_skip = false;  // end the current guide step now
+  std::optional<RelightControls> relight;  // changed relighting controls
 };
 
 class ControlWindow {
@@ -98,6 +131,9 @@ class ControlWindow {
                           ControlsActions& actions);
   void BuildInference(const ControlsModel& model, ControlsActions& actions);
   void BuildTestGuide(const TestGuide& guide, TestGuide::Clock::time_point now, ControlsActions& actions);
+  void BuildLighting(const ControlsModel& model, ControlsActions& actions);
+  // Light drag on the output preview just drawn, and its marker (Controls only).
+  void HandleLightDrag(const ControlsModel& model, const PreviewGeometry& preview, ControlsActions& actions);
 
   const GpuContext& gpu_;
   const OutputTexture& output_;
@@ -106,6 +142,7 @@ class ControlWindow {
   bool imgui_glfw_ = false;
   bool imgui_wgpu_ = false;
   std::string pending_virtual_id_;  // a virtual camera awaiting confirmation
+  bool dragging_light_ = false;
   std::string error_;
 };
 

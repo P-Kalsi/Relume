@@ -43,10 +43,14 @@ ImVec4 InferenceColor(InferenceState state) {
   return {1.0f, 1.0f, 1.0f, 1.0f};
 }
 
-// Draws `view` aspect-fit (1280x720) into a `width` x `height` area at the cursor.
-void FittedImage(const wgpu::TextureView& view, float width, float height) {
+// Draws `view` aspect-fit (1280x720) into a `width` x `height` area at the
+// cursor. Returns where it landed on screen.
+PreviewGeometry FittedImage(const wgpu::TextureView& view, float width, float height) {
+  PreviewGeometry geometry;
+  geometry.output_width = OutputTexture::kWidth;
+  geometry.output_height = OutputTexture::kHeight;
   if (width < 1.0f || height < 1.0f) {
-    return;
+    return geometry;
   }
   const PixelRect fit = FitRect(OutputTexture::kWidth, OutputTexture::kHeight, static_cast<std::uint32_t>(width),
                                 static_cast<std::uint32_t>(height));
@@ -54,6 +58,12 @@ void FittedImage(const wgpu::TextureView& view, float width, float height) {
   ImGui::SetCursorPos({cursor.x + static_cast<float>(fit.x), cursor.y + static_cast<float>(fit.y)});
   ImGui::Image(static_cast<ImTextureID>(reinterpret_cast<std::uintptr_t>(view.Get())),
                {static_cast<float>(fit.width), static_cast<float>(fit.height)});
+  const ImVec2 min = ImGui::GetItemRectMin();
+  geometry.x = min.x;
+  geometry.y = min.y;
+  geometry.width = static_cast<float>(fit.width);
+  geometry.height = static_cast<float>(fit.height);
+  return geometry;
 }
 
 std::string DeviceLabel(const CameraDeviceInfo& device) {
@@ -188,22 +198,32 @@ ControlsActions ControlWindow::BuildUi(const ControlsModel& model) {
     BuildGuidedCapture(*model.guided, model.now, actions);
   }
   BuildInference(model, actions);
+  BuildLighting(model, actions);
 
-  // Preview of the clean output and, beside it, the depth view, each
-  // aspect-fit into half of the remaining space.
+  // Preview of the clean output and, beside it, the depth or lighting debug
+  // view, each aspect-fit into half of the remaining space. The light is
+  // dragged on the output preview; its marker is drawn here only.
   ImGui::Separator();
   const ImVec2 avail = ImGui::GetContentRegionAvail();
+  const char* output_caption = model.relit ? "Output (relit; drag to move the light)" : "Output (camera passthrough)";
   if (model.depth_view == nullptr) {
-    FittedImage(output_.view(), avail.x, avail.y);
+    ImGui::TextDisabled("%s", output_caption);
+    const PreviewGeometry output_preview =
+        FittedImage(output_.view(), avail.x, avail.y - ImGui::GetTextLineHeightWithSpacing());
+    HandleLightDrag(model, output_preview, actions);
   } else {
     const float spacing = ImGui::GetStyle().ItemSpacing.x;
     const float half = (avail.x - spacing) / 2.0f;
     const float label_height = ImGui::GetTextLineHeightWithSpacing();
     const ImVec2 start = ImGui::GetCursorPos();
-    ImGui::TextDisabled("Output (camera passthrough)");
-    FittedImage(output_.view(), half, avail.y - label_height);
+    ImGui::TextDisabled("%s", output_caption);
+    const PreviewGeometry output_preview = FittedImage(output_.view(), half, avail.y - label_height);
+    HandleLightDrag(model, output_preview, actions);
     ImGui::SetCursorPos({start.x + half + spacing, start.y});
-    ImGui::TextDisabled(model.depth_overlay ? "Depth over camera (brighter = nearer)" : "Depth (brighter = nearer)");
+    const int view = std::clamp(model.relight.view, 0, static_cast<int>(std::size(kRelightViews)) - 1);
+    const bool raw_depth = !kRelightViews[view].view.has_value();
+    ImGui::TextDisabled("%s", raw_depth && model.depth_overlay ? "Depth over camera (brighter = nearer)"
+                                                               : kRelightViews[view].caption);
     ImGui::SetCursorPos({start.x + half + spacing, start.y + label_height});
     FittedImage(model.depth_view->view(), half, avail.y - label_height);
   }
@@ -280,6 +300,95 @@ void ControlWindow::BuildInference(const ControlsModel& model, ControlsActions& 
     ImGui::SameLine();
     ImGui::TextDisabled("|  %s", model.inference_timing.c_str());
   }
+}
+
+// Relighting engineering controls (Phase 4). Every change is applied on the
+// next frame; nothing here waits for the camera or the depth worker.
+void ControlWindow::BuildLighting(const ControlsModel& model, ControlsActions& actions) {
+  ImGui::Separator();
+  RelightControls c = model.relight;
+  ImGui::TextUnformatted("Relighting:");
+  ImGui::SameLine();
+  ImGui::TextDisabled("%s", model.relight_label.c_str());
+  bool changed = ImGui::Checkbox("Bypass (A/B)", &c.bypass);
+  ImGui::SameLine();
+  changed |= ImGui::Checkbox("Crossfade depth updates", &c.crossfade);
+  ImGui::SameLine();
+  ImGui::SetNextItemWidth(200.0f);
+  const int current = std::clamp(c.view, 0, static_cast<int>(std::size(kRelightViews)) - 1);
+  if (ImGui::BeginCombo("Right view", kRelightViews[current].label)) {
+    for (int i = 0; i < static_cast<int>(std::size(kRelightViews)); ++i) {
+      if (ImGui::Selectable(kRelightViews[i].label, i == current) && i != current) {
+        c.view = i;
+        changed = true;
+      }
+    }
+    ImGui::EndCombo();
+  }
+  if (ImGui::TreeNodeEx("Light", ImGuiTreeNodeFlags_DefaultOpen)) {
+    LightSettings& l = c.light;
+    const float width = 220.0f;
+    ImGui::SetNextItemWidth(width);
+    changed |= ImGui::SliderFloat("X (left-right)", &l.x, 0.0f, 1.0f, "%.2f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(width);
+    changed |= ImGui::SliderFloat("Y (top-bottom)", &l.y, 0.0f, 1.0f, "%.2f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(width);
+    changed |= ImGui::SliderFloat("Z (distance)", &l.z, 0.2f, 4.0f, "%.2f");
+    ImGui::SetNextItemWidth(width);
+    changed |= ImGui::SliderFloat("Diffuse intensity", &l.intensity, 0.0f, 1.5f, "%.2f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(width);
+    changed |= ImGui::SliderFloat("Ambient", &l.ambient, 0.2f, 1.2f, "%.2f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(width);
+    changed |= ImGui::SliderFloat("Specular", &l.specular, 0.0f, 0.4f, "%.2f");
+    ImGui::SetNextItemWidth(width);
+    changed |= ImGui::SliderFloat("Tint (cool - warm)", &l.tint, -1.0f, 1.0f, "%.2f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(width);
+    changed |= ImGui::SliderFloat("Relief (heuristic)", &l.relief, 0.0f, 1.5f, "%.2f");
+    ImGui::TreePop();
+  }
+  if (changed) {
+    c.light = c.light.Clamped();
+    actions.relight = c;
+  }
+}
+
+void ControlWindow::HandleLightDrag(const ControlsModel& model, const PreviewGeometry& base, ControlsActions& actions) {
+  if (base.width <= 0.0f || !model.has_image) {
+    dragging_light_ = false;
+    return;
+  }
+  PreviewGeometry preview = base;
+  preview.image = model.image_rect;
+  if (ImGui::IsItemHovered() && ImGui::IsMouseClicked(ImGuiMouseButton_Left)) {
+    dragging_light_ = true;
+  }
+  if (!ImGui::IsMouseDown(ImGuiMouseButton_Left)) {
+    dragging_light_ = false;
+  }
+  RelightControls c = actions.relight.value_or(model.relight);
+  if (dragging_light_) {
+    const ImVec2 mouse = ImGui::GetMousePos();
+    const ImageUv uv = PreviewToImageUv(mouse.x, mouse.y, preview);
+    if (uv.u != c.light.x || uv.v != c.light.y) {
+      c.light.x = uv.u;
+      c.light.y = uv.v;
+      actions.relight = c;
+    }
+  }
+  // The marker: over the preview in this window only, never in the output.
+  float mx = 0.0f, my = 0.0f;
+  ImageUvToPreview({c.light.x, c.light.y}, preview, mx, my);
+  ImDrawList* draw = ImGui::GetWindowDrawList();
+  const ImU32 colour = dragging_light_ ? IM_COL32(255, 220, 90, 255) : IM_COL32(255, 255, 255, 200);
+  draw->AddCircle({mx, my}, 9.0f, IM_COL32(0, 0, 0, 160), 0, 4.0f);
+  draw->AddCircle({mx, my}, 9.0f, colour, 0, 2.0f);
+  draw->AddLine({mx - 4.0f, my}, {mx + 4.0f, my}, colour, 1.5f);
+  draw->AddLine({mx, my - 4.0f}, {mx, my + 4.0f}, colour, 1.5f);
 }
 
 // Guided capture: instructions, countdown and progress for local test shots.

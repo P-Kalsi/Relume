@@ -581,6 +581,47 @@ TEST_F(RelightGpuTest, CrossfadeSlotsNeverOverwriteWhatIsStillRead) {
   }
 }
 
+// The timer records pass times without the caller waiting; this test waits
+// only to collect them. Skipped (not failed) without TimestampQuery.
+TEST_F(RelightGpuTest, GpuTimerRecordsRelightPasses) {
+  if (!gpu_->supports_timestamps()) {
+    GTEST_SKIP() << "the adapter has no TimestampQuery";
+  }
+  const ResizeTransform t = *ComputeTransform(1280, 720, ResizeMethod::kStretch);
+  const std::vector<float> depth = TestDepth(t);
+  DepthUploader uploader(*gpu_);
+  ASSERT_TRUE(uploader.Upload(depth.data(), t));
+  NormalPass pass(*gpu_);
+  GpuTimer build_timer(*gpu_);
+  pass.set_timer(&build_timer);
+  DepthFieldTexture field(*gpu_);
+  ASSERT_TRUE(pass.Build(uploader, kScale, kOffset, Aspect(t), field));
+  const wgpu::Texture camera = Camera(MakeOrientationPattern(1280, 720));
+  OutputTexture output(*gpu_);
+  Relighter relighter(*gpu_, output);
+  GpuTimer relight_timer(*gpu_, 4);
+  relighter.set_timer(&relight_timer);
+  RelightFrame frame;
+  frame.from = frame.to = &field;
+  for (int i = 0; i < 12; ++i) {
+    ASSERT_TRUE(relighter.Render(camera, frame));  // 4 slots: some are refused, never waited for
+  }
+  ASSERT_TRUE(gpu_->WaitIdle());
+  for (int i = 0; i < 100 && relight_timer.ms().count() + relight_timer.unmeasured() < 12; ++i) {
+    gpu_->instance().ProcessEvents();
+  }
+  EXPECT_EQ(relight_timer.ms().count() + relight_timer.unmeasured(), 12u);
+  EXPECT_GE(relight_timer.ms().count(), 4u);
+  for (int i = 0; i < 100 && build_timer.ms().count() == 0; ++i) {
+    gpu_->instance().ProcessEvents();
+  }
+  EXPECT_EQ(build_timer.ms().count(), 1u);
+  std::printf("GPU time: depth field p50 %.2f ms; relight p50 %.2f ms p95 %.2f ms (%llu measured, %llu skipped)\n",
+              build_timer.ms().Percentile(0.5), relight_timer.ms().Percentile(0.5), relight_timer.ms().Percentile(0.95),
+              static_cast<unsigned long long>(relight_timer.ms().count()),
+              static_cast<unsigned long long>(relight_timer.unmeasured()));
+}
+
 TEST_F(RelightGpuTest, RenderRefusesMissingOrMismatchedFields) {
   const wgpu::Texture camera = Camera(MakeOrientationPattern(64, 36));
   OutputTexture output(*gpu_);
