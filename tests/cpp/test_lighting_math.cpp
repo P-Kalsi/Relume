@@ -78,7 +78,8 @@ TEST(LightingMath, PlaneFacesTheCamera) {
 
 TEST(LightingMath, RampNearerOnTheRightFacesLeft) {
   const Grid g = MakeGrid(64, 36, [](float u, float) { return 0.2f + 0.5f * u; });
-  const FieldTexel& t = At(Field(g), g, 32, 18);
+  const std::vector<FieldTexel> field = Field(g);
+  const FieldTexel& t = At(field, g, 32, 18);
   EXPECT_LT(Normal(t).x, -0.05f);
   EXPECT_NEAR(Normal(t).y, 0.0f, 1e-6f);
   EXPECT_FLOAT_EQ(t.conf, 1.0f);
@@ -86,14 +87,16 @@ TEST(LightingMath, RampNearerOnTheRightFacesLeft) {
 
 TEST(LightingMath, RampNearerAtTheBottomFacesUp) {
   const Grid g = MakeGrid(64, 36, [](float, float v) { return 0.2f + 0.5f * v; });
-  const FieldTexel& t = At(Field(g), g, 32, 18);
+  const std::vector<FieldTexel> field = Field(g);
+  const FieldTexel& t = At(field, g, 32, 18);
   EXPECT_GT(Normal(t).y, 0.05f);
   EXPECT_NEAR(Normal(t).x, 0.0f, 1e-6f);
 }
 
 TEST(LightingMath, LightTowardTheFacingSideBrightens) {
   const Grid g = MakeGrid(64, 36, [](float u, float) { return 0.2f + 0.5f * u; });  // faces left
-  const FieldTexel& t = At(Field(g), g, 32, 18);
+  const std::vector<FieldTexel> field = Field(g);
+  const FieldTexel& t = At(field, g, 32, 18);
   LightSettings left;
   left.x = 0.1f;
   left.y = 0.5f;
