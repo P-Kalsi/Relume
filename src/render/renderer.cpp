@@ -212,15 +212,21 @@ std::unique_ptr<GpuContext> GpuContext::Create(std::string& error) {
 
   GpuErrorLog* log = gpu->errors_.get();
   wgpu::DeviceDescriptor device_desc{};
-  // Optional: needed only by the IOSurface window presenter.
-  const std::array<wgpu::FeatureName, 2> layer_features = {wgpu::FeatureName::SharedTextureMemoryIOSurface,
-                                                           wgpu::FeatureName::SharedFenceMTLSharedEvent};
-  gpu->supports_layer_presentation_ =
-      gpu->adapter_.HasFeature(layer_features[0]) && gpu->adapter_.HasFeature(layer_features[1]);
+  // Optional: the IOSurface window presenter needs the first two; GPU pass
+  // timing needs TimestampQuery. Each is requested only if the adapter has it.
+  std::vector<wgpu::FeatureName> device_features;
+  gpu->supports_layer_presentation_ = gpu->adapter_.HasFeature(wgpu::FeatureName::SharedTextureMemoryIOSurface) &&
+                                      gpu->adapter_.HasFeature(wgpu::FeatureName::SharedFenceMTLSharedEvent);
   if (gpu->supports_layer_presentation_) {
-    device_desc.requiredFeatureCount = layer_features.size();
-    device_desc.requiredFeatures = layer_features.data();
+    device_features.push_back(wgpu::FeatureName::SharedTextureMemoryIOSurface);
+    device_features.push_back(wgpu::FeatureName::SharedFenceMTLSharedEvent);
   }
+  gpu->supports_timestamps_ = gpu->adapter_.HasFeature(wgpu::FeatureName::TimestampQuery);
+  if (gpu->supports_timestamps_) {
+    device_features.push_back(wgpu::FeatureName::TimestampQuery);
+  }
+  device_desc.requiredFeatureCount = device_features.size();
+  device_desc.requiredFeatures = device_features.data();
   device_desc.SetDeviceLostCallback(
       wgpu::CallbackMode::AllowSpontaneous,
       [log](const wgpu::Device&, wgpu::DeviceLostReason reason, wgpu::StringView message) {

@@ -65,6 +65,8 @@ class GpuContext {
   // True if the device was created with the features that IOSurface window
   // presentation needs (SharedTextureMemoryIOSurface, SharedFenceMTLSharedEvent).
   bool supports_layer_presentation() const { return supports_layer_presentation_; }
+  // True if the device was created with TimestampQuery (GPU pass timing).
+  bool supports_timestamps() const { return supports_timestamps_; }
 
   // Waits for all submitted work to finish (tests and shutdown only).
   bool WaitIdle();
@@ -78,6 +80,7 @@ class GpuContext {
   wgpu::Queue queue_;
   std::string adapter_name_;
   bool supports_layer_presentation_ = false;
+  bool supports_timestamps_ = false;
 };
 
 // The fixed-size clean video output. Its size never follows any window.

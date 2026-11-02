@@ -517,7 +517,8 @@ int RunHeadless(const AppOptions& options) {
     std::fprintf(stderr, "FAIL: %s\n", error.c_str());
     return 1;
   }
-  std::printf("GPU: %s\n", gpu->adapter_name().c_str());
+  std::printf("GPU: %s (timestamp queries: %s)\n", gpu->adapter_name().c_str(),
+              gpu->supports_timestamps() ? "yes" : "no");
   VideoPipeline pipeline(*gpu);
   CameraEventQueue events;
   LatestFrameSlot slot;
@@ -1049,7 +1050,8 @@ int RunWindowed(const AppOptions& options) {
     std::fprintf(stderr, "FAIL: %s\n", error.c_str());
     return 1;
   }
-  std::printf("GPU: %s\n", gpu->adapter_name().c_str());
+  std::printf("GPU: %s (timestamp queries: %s)\n", gpu->adapter_name().c_str(),
+              gpu->supports_timestamps() ? "yes" : "no");
   VideoPipeline pipeline(*gpu);
   DepthView depth_view(*gpu);
   ControlWindow controls(*gpu, pipeline.output, options.presenter);
