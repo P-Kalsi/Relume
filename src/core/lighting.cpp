@@ -74,7 +74,7 @@ Vec3 TintColor(float tint) {
 }
 
 std::vector<FieldTexel> BuildDepthField(const float* depth, std::uint32_t width, std::uint32_t height,
-                                        std::size_t stride, float scale, float offset, float aspect, float relief) {
+                                        std::size_t stride, float scale, float offset, float aspect) {
   const int w = static_cast<int>(width);
   const int h = static_cast<int>(height);
   const auto at = [](const std::vector<float>& v, int x, int y, int row) {
@@ -148,17 +148,21 @@ std::vector<FieldTexel> BuildDepthField(const float* depth, std::uint32_t width,
       float edge_y = 0.0f;
       const float sx = slope(c, at(smooth, x0, y, w), x - x0, at(smooth, x1, y, w), x1 - x, edge_x);
       const float sy = slope(c, at(smooth, x, y0, w), y - y0, at(smooth, x, y1, w), y1 - y, edge_y);
-      const float gx = std::clamp(relief * sx / x_unit, -kMaxGradient, kMaxGradient);
-      const float gy = std::clamp(relief * sy / y_unit, -kMaxGradient, kMaxGradient);
-      const Vec3 n = Normalize({-gx, -gy, 1.0f});
       FieldTexel& t = field[static_cast<std::size_t>(y * w + x)];
-      t.nx = n.x;
-      t.ny = n.y;
+      t.sx = std::clamp(sx / x_unit, -kMaxSlope, kMaxSlope);
+      t.sy = std::clamp(sy / y_unit, -kMaxSlope, kMaxSlope);
       t.h = c;
       t.conf = 1.0f - Smoothstep(kEdgeThreshold, 2.0f * kEdgeThreshold, std::max(edge_x, edge_y));
     }
   }
   return field;
+}
+
+Vec3 FieldNormal(const FieldTexel& field, float relief) {
+  const float conf = std::clamp(field.conf, 0.0f, 1.0f);
+  const float gx = conf * std::clamp(relief * field.sx, -kMaxGradient, kMaxGradient);
+  const float gy = conf * std::clamp(relief * field.sy, -kMaxGradient, kMaxGradient);
+  return Normalize({-gx, -gy, 1.0f});
 }
 
 Vec3 LightingPosition(float u, float v, float h, float aspect, float relief) {
@@ -170,9 +174,8 @@ Vec3 LightPosition(const LightSettings& s, float aspect) {
 }
 
 Shading ComputeShading(const FieldTexel& field, float u, float v, const LightSettings& s, float aspect) {
-  const float nz = std::sqrt(std::max(0.0f, 1.0f - field.nx * field.nx - field.ny * field.ny));
   const float conf = std::clamp(field.conf, 0.0f, 1.0f);
-  const Vec3 n = Normalize({field.nx * conf, field.ny * conf, 1.0f + (nz - 1.0f) * conf});
+  const Vec3 n = FieldNormal(field, s.relief);
   const Vec3 p = LightingPosition(u, v, field.h, aspect, s.relief);
   const Vec3 light = LightPosition(s, aspect);
   const Vec3 to_light{light.x - p.x, light.y - p.y, light.z - p.z};

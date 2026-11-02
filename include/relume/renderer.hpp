@@ -18,6 +18,7 @@
 // DepthDebugTexture is a different type from OutputTexture, so it can never be
 // handed to Presenter or a window presenter: the Output window stays video only.
 
+#include "relume/lighting.hpp"
 #include "relume/preprocess.hpp"
 #include "relume/video_frame.hpp"
 
@@ -240,11 +241,103 @@ class DepthVisualizer {
   wgpu::BindGroup bind_group_;
 };
 
+// Relighting (Phase 4):
+//   uploaded depth --NormalPass--> DepthFieldTexture (RGBA16Float: slopes, height, confidence)
+//   camera texture + two depth fields (crossfade) --Relighter--> OutputTexture
+// The field covers exactly the camera image (the depth's valid region), so it
+// is sampled with the image's uv; see shaders/normals.wgsl and relight.wgsl,
+// and include/relume/lighting.hpp for the CPU reference.
+
+class DepthFieldTexture {
+ public:
+  static constexpr wgpu::TextureFormat kFormat = wgpu::TextureFormat::RGBA16Float;
+
+  explicit DepthFieldTexture(const GpuContext& gpu);
+  // (Re)creates the texture if its size differs; the content is then undefined.
+  void Ensure(std::uint32_t width, std::uint32_t height);
+  const wgpu::Texture& texture() const { return texture_; }
+  const wgpu::TextureView& view() const { return view_; }
+  std::uint32_t width() const { return width_; }
+  std::uint32_t height() const { return height_; }
+
+ private:
+  const GpuContext& gpu_;
+  wgpu::Texture texture_;
+  wgpu::TextureView view_;
+  std::uint32_t width_ = 0;
+  std::uint32_t height_ = 0;
+};
+
+// Builds depth fields, and crossfade snapshots of two fields.
+class NormalPass {
+ public:
+  explicit NormalPass(const GpuContext& gpu);
+  // `out` from the uploaded depth (its size), normalized as h = depth *
+  // scale + offset. `aspect` is the camera image's width / height. Returns
+  // false (and draws nothing) without uploaded depth.
+  bool Build(const DepthUploader& depth, float scale, float offset, float aspect, DepthFieldTexture& out);
+  // out = mix(from, to, t), the field shown at weight t. `out` must be a
+  // different texture from both inputs; the sizes must match.
+  bool Blend(const DepthFieldTexture& from, const DepthFieldTexture& to, float t, DepthFieldTexture& out);
+
+ private:
+  const GpuContext& gpu_;
+  wgpu::BindGroupLayout build_layout_;
+  wgpu::BindGroupLayout blend_layout_;
+  wgpu::RenderPipeline build_pipeline_;
+  wgpu::RenderPipeline blend_pipeline_;
+  wgpu::Buffer build_params_;
+  wgpu::Buffer blend_params_;
+};
+
+// What the relight shader draws. Views other than kRelit are debug views for
+// the Controls window; Relighter::Render never uses them.
+enum class RelightView : std::uint8_t { kRelit, kHeight, kNormals, kGain, kConfidence };
+
+struct RelightFrame {
+  const DepthFieldTexture* from = nullptr;
+  const DepthFieldTexture* to = nullptr;
+  float blend = 1.0f;  // crossfade weight from -> to
+  float fade = 1.0f;   // effect weight: 0 = passthrough
+  LightSettings light;  // clamped before use
+};
+
+class Relighter {
+ public:
+  Relighter(const GpuContext& gpu, const OutputTexture& output);
+  // The relit camera image into the OutputTexture, aspect-fit with black bars
+  // exactly like OutputCompositor. Returns false (and draws nothing) if the
+  // camera texture or a field is missing, or the fields differ in size.
+  bool Render(const wgpu::Texture& camera_texture, const RelightFrame& frame);
+  // A view of the same frame into the DepthDebugTexture (Controls only).
+  bool RenderDebug(const wgpu::Texture& camera_texture, const RelightFrame& frame, RelightView view,
+                   const DepthDebugTexture& target);
+
+ private:
+  struct Target {
+    wgpu::Buffer params;
+    wgpu::BindGroup bind_group;
+    wgpu::Texture camera, from, to;  // what bind_group refers to
+  };
+  bool Draw(Target& target, const wgpu::TextureView& view, const wgpu::Texture& camera_texture,
+            const RelightFrame& frame, RelightView mode);
+
+  const GpuContext& gpu_;
+  const OutputTexture& output_;
+  wgpu::BindGroupLayout layout_;
+  wgpu::RenderPipeline pipeline_;
+  wgpu::Sampler sampler_;
+  Target output_target_;
+  Target debug_target_;
+};
+
 // Copies an RGBA8/BGRA8 texture back to the CPU as tightly packed 4-byte
 // pixels (in the texture's own channel order). Blocks until done. For tests
 // and the headless smoke run only; the app never reads frames back.
 bool ReadbackTexture(GpuContext& gpu, const wgpu::Texture& texture, std::vector<std::uint8_t>& pixels);
 // The same for an R32Float texture (tests only).
 bool ReadbackFloatTexture(GpuContext& gpu, const wgpu::Texture& texture, std::vector<float>& values);
+// The same for a depth field, as 4 floats per texel (tests only).
+bool ReadbackFieldTexture(GpuContext& gpu, const DepthFieldTexture& field, std::vector<float>& values);
 
 }  // namespace relume

@@ -42,9 +42,11 @@ Grid MakeGrid(std::uint32_t width, std::uint32_t height, F f) {
   return g;
 }
 
-std::vector<FieldTexel> Field(const Grid& g, float relief = 0.6f) {
-  return BuildDepthField(g.depth.data(), g.width, g.height, g.width, 1.0f, 0.0f, kAspect, relief);
+std::vector<FieldTexel> Field(const Grid& g) {
+  return BuildDepthField(g.depth.data(), g.width, g.height, g.width, 1.0f, 0.0f, kAspect);
 }
+
+Vec3 Normal(const FieldTexel& t) { return FieldNormal(t, 0.6f); }
 
 const FieldTexel& At(const std::vector<FieldTexel>& f, const Grid& g, std::uint32_t x, std::uint32_t y) {
   return f[std::size_t{y} * g.width + x];
@@ -66,8 +68,9 @@ TEST(LightingMath, PlaneFacesTheCamera) {
   const Grid g = MakeGrid(64, 36, [](float, float) { return 0.5f; });
   const std::vector<FieldTexel> f = Field(g);
   for (const FieldTexel& t : f) {
-    EXPECT_FLOAT_EQ(t.nx, 0.0f);
-    EXPECT_FLOAT_EQ(t.ny, 0.0f);
+    EXPECT_FLOAT_EQ(t.sx, 0.0f);
+    EXPECT_FLOAT_EQ(t.sy, 0.0f);
+    EXPECT_FLOAT_EQ(Normal(t).z, 1.0f);
     EXPECT_FLOAT_EQ(t.conf, 1.0f);
     EXPECT_NEAR(t.h, 0.5f, 1e-6f);
   }
@@ -76,16 +79,16 @@ TEST(LightingMath, PlaneFacesTheCamera) {
 TEST(LightingMath, RampNearerOnTheRightFacesLeft) {
   const Grid g = MakeGrid(64, 36, [](float u, float) { return 0.2f + 0.5f * u; });
   const FieldTexel& t = At(Field(g), g, 32, 18);
-  EXPECT_LT(t.nx, -0.05f);
-  EXPECT_NEAR(t.ny, 0.0f, 1e-6f);
+  EXPECT_LT(Normal(t).x, -0.05f);
+  EXPECT_NEAR(Normal(t).y, 0.0f, 1e-6f);
   EXPECT_FLOAT_EQ(t.conf, 1.0f);
 }
 
 TEST(LightingMath, RampNearerAtTheBottomFacesUp) {
   const Grid g = MakeGrid(64, 36, [](float, float v) { return 0.2f + 0.5f * v; });
   const FieldTexel& t = At(Field(g), g, 32, 18);
-  EXPECT_GT(t.ny, 0.05f);
-  EXPECT_NEAR(t.nx, 0.0f, 1e-6f);
+  EXPECT_GT(Normal(t).y, 0.05f);
+  EXPECT_NEAR(Normal(t).x, 0.0f, 1e-6f);
 }
 
 TEST(LightingMath, LightTowardTheFacingSideBrightens) {
@@ -152,7 +155,7 @@ TEST(LightingMath, SphereBrightestPointFollowsTheLight) {
 
 TEST(LightingMath, NeutralSettingsAndZeroFadeAreTheIdentity) {
   const Grid g = Sphere(64, 36);
-  const std::vector<FieldTexel> f = Field(g, 1.5f);
+  const std::vector<FieldTexel> f = Field(g);
   LightSettings strong;
   strong.intensity = 1.5f;
   strong.specular = 0.4f;
@@ -195,11 +198,11 @@ TEST(LightingMath, EveryBoundCombinationStaysFiniteAndBounded) {
                           pick(5, lo.specular, hi.specular),   pick(6, lo.tint, hi.tint),
                           pick(7, lo.relief, hi.relief)};
     ASSERT_EQ(s.Clamped(), s);
-    const std::vector<FieldTexel> f = Field(g, s.relief);
+    const std::vector<FieldTexel> f = Field(g);
     for (std::uint32_t y = 0; y < g.height; y += 3) {
       for (std::uint32_t x = 0; x < g.width; x += 3) {
         const FieldTexel& t = At(f, g, x, y);
-        ASSERT_TRUE(std::isfinite(t.nx) && std::isfinite(t.ny) && std::isfinite(t.h) && std::isfinite(t.conf));
+        ASSERT_TRUE(std::isfinite(t.sx) && std::isfinite(t.sy) && std::isfinite(t.h) && std::isfinite(t.conf));
         const float u = (static_cast<float>(x) + 0.5f) / static_cast<float>(g.width);
         const float v = (static_cast<float>(y) + 0.5f) / static_cast<float>(g.height);
         const Shading sh = ComputeShading(t, u, v, s, kAspect);
@@ -227,9 +230,9 @@ TEST(LightingMath, ConstantAndZeroDepthHaveNoNaN) {
     // A zero scale (unusable range) and a huge one.
     for (const float scale : {0.0f, 1e6f}) {
       const std::vector<FieldTexel> f =
-          BuildDepthField(g.depth.data(), g.width, g.height, g.width, scale, 0.0f, kAspect, 1.5f);
+          BuildDepthField(g.depth.data(), g.width, g.height, g.width, scale, 0.0f, kAspect);
       for (const FieldTexel& t : f) {
-        ASSERT_TRUE(std::isfinite(t.nx) && std::isfinite(t.ny) && std::isfinite(t.h) && std::isfinite(t.conf));
+        ASSERT_TRUE(std::isfinite(t.sx) && std::isfinite(t.sy) && std::isfinite(t.h) && std::isfinite(t.conf));
         ASSERT_GE(t.h, kHeightMin);
         ASSERT_LE(t.h, kHeightMax);
         const Shading s = ComputeShading(t, 0.5f, 0.5f, LightSettings{}, kAspect);
@@ -239,8 +242,8 @@ TEST(LightingMath, ConstantAndZeroDepthHaveNoNaN) {
   }
   // A 1x1 grid has no neighbours at all.
   const float one = 0.5f;
-  const std::vector<FieldTexel> f = BuildDepthField(&one, 1, 1, 1, 1.0f, 0.0f, kAspect, 1.0f);
-  EXPECT_FLOAT_EQ(f[0].nx, 0.0f);
+  const std::vector<FieldTexel> f = BuildDepthField(&one, 1, 1, 1, 1.0f, 0.0f, kAspect);
+  EXPECT_FLOAT_EQ(f[0].sx, 0.0f);
   EXPECT_FLOAT_EQ(f[0].conf, 1.0f);
 }
 
@@ -252,7 +255,7 @@ TEST(LightingMath, DepthStepLowersConfidenceAndKeepsTheFlatSide) {
     const FieldTexel& t = At(f, g, x, 18);
     EXPECT_LT(t.conf, 0.05f) << "column " << x;
     // The flat side's slope is used: no steep normal at the step.
-    EXPECT_LT(std::abs(t.nx), 0.05f) << "column " << x;
+    EXPECT_LT(std::abs(Normal(t).x), 0.05f) << "column " << x;
   }
   EXPECT_FLOAT_EQ(At(f, g, 20, 18).conf, 1.0f);
   EXPECT_FLOAT_EQ(At(f, g, 44, 18).conf, 1.0f);

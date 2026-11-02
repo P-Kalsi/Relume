@@ -17,12 +17,15 @@
 //   tunable heuristic, not a measurement.
 //   Normal: n = normalize(-dz/dx, -dz/dy, 1), so n.z > 0 always. A ramp that
 //   is nearer on the right faces left (n.x < 0); one nearer at the bottom
-//   faces up (n.y > 0).
+//   faces up (n.y > 0). The depth field stores the slopes of h (dh/dx,
+//   dh/dy), not normals, so relief applies at shading time: changing it
+//   needs no rebuild and keeps the crossfade history valid.
 //
 // Shading. The camera pixel already contains the room's light, so Relume
 // does not estimate albedo: it applies a bounded gain in linear light.
 //   lin  = SrgbToLinear(camera)
-//   n'   = normalize(mix((0,0,1), n, conf))       low confidence (depth edges) -> camera facing
+//   g    = conf * clamp(relief * slope, -kMaxGradient, kMaxGradient)
+//   n'   = normalize(-g.x, -g.y, 1)                low confidence (depth edges) -> camera facing
 //   diff = max((dot(n', l) + kWrap) / (1 + kWrap), 0)
 //   att  = min(Attenuation(|L - P|) / Attenuation(light z above the plane), kMaxAttenuation)
 //   gain = clamp(ambient + intensity * diff * att * tint, kMinGain, kMaxGain)
@@ -81,6 +84,7 @@ inline constexpr float kEdgeThreshold = 0.06f;         // |dh| over kGradientSte
 inline constexpr float kBilateralSigmaRange = kEdgeThreshold;
 inline constexpr int kGradientStep = 2;                // texels: coarse-scale shape, not fine noise
 inline constexpr float kMaxGradient = 3.0f;            // |dz/dx|, |dz/dy| clamp (lighting units)
+inline constexpr float kMaxSlope = 8.0f;               // stored |dh/dx| clamp; above 2 the gradient saturates anyway
 inline constexpr float kHeightMin = -0.5f;             // normalized depth is clamped to this range
 inline constexpr float kHeightMax = 1.5f;
 
@@ -94,11 +98,12 @@ float Bt709ToLinear(float encoded);
 // The warm/cool tint as an RGB multiplier with Rec. 709 luminance 1.
 Vec3 TintColor(float tint);
 
-// One texel of the depth field: normal x and y (z = sqrt(1 - x^2 - y^2)),
-// smoothed height h, and confidence in [0, 1] (low at depth discontinuities).
+// One texel of the depth field: the slopes of h per lighting unit (x right,
+// y up), smoothed height h, and confidence in [0, 1] (low at depth
+// discontinuities).
 struct FieldTexel {
-  float nx = 0.0f;
-  float ny = 0.0f;
+  float sx = 0.0f;
+  float sy = 0.0f;
   float h = 0.0f;
   float conf = 0.0f;
 };
@@ -107,9 +112,13 @@ struct FieldTexel {
 // offset, kHeightMin, kHeightMax) on a width x height grid that covers the
 // camera image (aspect = image width / height): a 5x5 bilateral filter, then
 // gradients over kGradientStep texels with one-sided differences at
-// discontinuities, then the normal and confidence. Edges are clamped.
+// discontinuities, then the slopes and confidence. Edges are clamped.
 std::vector<FieldTexel> BuildDepthField(const float* depth, std::uint32_t width, std::uint32_t height,
-                                        std::size_t stride, float scale, float offset, float aspect, float relief);
+                                        std::size_t stride, float scale, float offset, float aspect);
+
+// The shading normal of a field texel at a given relief, with confidence
+// applied (conf 0 faces the camera).
+Vec3 FieldNormal(const FieldTexel& field, float relief);
 
 // Lighting-space position of image point (u, v) at height h.
 Vec3 LightingPosition(float u, float v, float h, float aspect, float relief);

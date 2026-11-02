@@ -56,7 +56,7 @@ relume_set_warnings(relume_camera)
 find_package(Dawn REQUIRED)
 set(_shader_dir "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
 set(_shader_headers)
-foreach(_shader convert blit depth_vis)
+foreach(_shader convert blit depth_vis normals relight)
   set(_input "${PROJECT_SOURCE_DIR}/shaders/${_shader}.wgsl")
   set(_output "${_shader_dir}/${_shader}_wgsl.hpp")
   # depth_vis -> kDepthVisWgsl
