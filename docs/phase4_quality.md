@@ -47,6 +47,34 @@ means:
 | 13 | Controls: sliders and drag respond immediately; video stays smooth | | | |
 | 14 | Output window: video only (no marker, no text) | | | |
 
+## Session 1 (2026-11-02): paused after Section 2 at the developer's request
+
+FaceTime HD, Release, CoreML CPUAndGPU, default controls. Ratings so far:
+
+| Item | Result |
+|---|---|
+| 1a Status label (relit / bypassed) | pass |
+| 1b Shape-following shading | pass, but subtle |
+| 1c Facial detail kept | pass |
+| 1d Halos | **fail (open issue 1):** during head motion, a ghost head outline on the wall where the head was, and a sharp vertical seam across the face. Seen in one screenshot the developer approved Claude to view (stays in the developer's Downloads; not copied). Likely cause, not yet measured: the distance term uses the depth height, which steps sharply at a silhouette; with about 180 ms of depth lag, the step lands on the old silhouette position. Confidence softens only the normals. |
+| 1e Stable when still | pass |
+| 1f Bypass instant, passthrough normal | pass |
+| 2a Left/right follows the marker | pass |
+| 2b Up/down follows the marker | pass |
+| 2c Face-shaped shading | **fail (open issue 2):** reads as a brightness change over the whole face area, not face-shaped light |
+| 2d Relief 0 vs 1.5 | weak: more light, not very different (consistent with issue 2) |
+| 2e Normals view as described | pass (developer's remark "the input looks the same as the output views" to be clarified) |
+
+Not yet done: Sections 3-8.
+
+Live numbers (session 1, stats intervals after Ready):
+- capture and composed 30.0 fps; pool drops 0; render loop p95 17.1 ms, max 18.1 ms;
+- depth 6.3-6.5 results/s, age p50 182 ms, lag p50 5 frames;
+- relight GPU p50 0.7-0.8 ms, p95 2.2-2.65 ms; depth field GPU p50 0.8-0.95 ms;
+- stabilize p50 2.3-2.35 ms, p95 2.5-2.75 ms (under 3 ms);
+- memory 710-712 MiB;
+- **662 scene changes out of 30,892 depth fields (2.1%)**, each a hard cut without a crossfade (open issue 3: check whether motion triggers them and whether they are visible).
+
 ## Live camera numbers (from `[stats]`, 120 s after Ready)
 
 | Measure | Requirement | Result |
