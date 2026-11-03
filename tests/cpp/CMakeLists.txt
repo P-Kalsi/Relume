@@ -3,13 +3,17 @@
 relume_fetch_googletest()
 include(GoogleTest)
 
-# relume_add_gtest(<name> SOURCES <files...> LIBS <targets...>)
+# relume_add_gtest(<name> SOURCES <files...> LIBS <targets...> [TIMEOUT <seconds>])
+# TIMEOUT is per test case (default 120 s).
 function(relume_add_gtest name)
-  cmake_parse_arguments(ARG "" "" "SOURCES;LIBS" ${ARGN})
+  cmake_parse_arguments(ARG "" "TIMEOUT" "SOURCES;LIBS" ${ARGN})
+  if(NOT ARG_TIMEOUT)
+    set(ARG_TIMEOUT 120)
+  endif()
   add_executable(${name} ${ARG_SOURCES})
   target_link_libraries(${name} PRIVATE ${ARG_LIBS} GTest::gtest_main)
   relume_set_warnings(${name})
-  gtest_discover_tests(${name} DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT 120)
+  gtest_discover_tests(${name} DISCOVERY_TIMEOUT 60 PROPERTIES TIMEOUT ${ARG_TIMEOUT})
 endfunction()
 
 relume_add_gtest(test_pixel_convert SOURCES test_pixel_convert.cpp LIBS relume_core)
@@ -34,4 +38,6 @@ relume_add_gtest(test_relight_gpu SOURCES test_relight_gpu.cpp LIBS relume_rende
 relume_add_gtest(test_test_guide SOURCES test_test_guide.cpp LIBS relume_core)
 relume_add_gtest(test_lighting_math SOURCES test_lighting_math.cpp LIBS relume_core)
 relume_add_gtest(test_crossfade SOURCES test_crossfade.cpp LIBS relume_core)
-relume_add_gtest(test_depth_stabilizer SOURCES test_depth_stabilizer.cpp LIBS relume_core)
+# 600 s: the 500-result drift test takes about 3 minutes under TSan (2 s in
+# Release); a time limit, not a tolerance.
+relume_add_gtest(test_depth_stabilizer SOURCES test_depth_stabilizer.cpp LIBS relume_core TIMEOUT 600)

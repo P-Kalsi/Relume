@@ -603,3 +603,148 @@ Ready, the first one skipped.
   alone can support. It should be considered when relighting quality is
   evaluated (Phase 4 onwards); Phase 3 does not try to fix it.
 
+
+## Phase 4 — Relighting (2026-11-01 to 2026-11-02; in progress)
+
+Scope (approved 2026-11-01):
+- minimal temporal stabilization (stages A, B and C below);
+- engineering controls in the Controls window only;
+- OBS as a separate integration gate after Phase 4.
+
+Presets, Reset, Enable/Disable and the HUD stay in Phase 6. Motion
+compensation and long benchmarks stay in Phase 5. The design is in
+`docs/architecture.md`, "Relighting".
+
+### Baseline and probes (M0)
+- The Apple M2 adapter offers `TimestampQuery`. It is requested only when
+  offered, like the IOSurface features. Dawn's default timestamp quantization
+  is left on; no unsafe toggles are set.
+- RGBA16Float render and filter are core WebGPU; no extra feature is needed.
+- Passthrough baseline (Release, file source 1280×720 NV12, CoreML, 75 s):
+  - capture and composed 30.0 fps, 0 pool drops;
+  - render loop p95 17.0–17.3 ms, max 17.8 ms;
+  - depth 7.1–7.5 results/s, age p50 154–168 ms.
+
+### Lighting math and GPU passes (M1–M2)
+- The CPU reference (`include/relume/lighting.hpp`) passes 13 tests:
+  orientation, light direction, identity, bounds, no NaN, and an exact sRGB
+  round trip.
+- GPU vs CPU, with tolerances fixed in advance:
+
+  | Check | Result | Tolerance |
+  |---|---|---|
+  | Depth field | h 9.8e-4, normal 3.6e-4, conf 0 | 2e-3 |
+  | Relit output (also mid-crossfade) | max 1 | 2 |
+  | Neutral settings and fade 0 vs passthrough, 16:9 | 0 differing values | ±1 |
+  | Neutral settings and fade 0 vs passthrough, 4:3 upscaled | max 1 (14,037 values off by 1) | ±1 |
+  | Depth-step alignment | within 1 px | 1 px |
+
+  The 4:3 differences come from bilinear upscaling: the sampled values fall
+  between 8-bit codes before the sRGB round trip.
+- Sphere test, light left vs right: 15.4 levels of asymmetry with normals,
+  6.4 from distance alone (relief 0). The normals add to the effect, so their
+  orientation is correct.
+- **Design change during M2:** the depth field stores height slopes, not
+  normals, and relief is applied while shading. Reason: otherwise every relief
+  change needs a field rebuild and invalidates the crossfade history.
+- **BT.709 vs sRGB decode:** at most 0.047 in linear light (at code 151).
+  Documented, not corrected; it affects only relit, non-neutral output.
+
+### App integration (M3)
+- Release, file source, CoreML, relighting active:
+  - render loop p95 17.00–17.05 ms (baseline 17.0–17.3), max 18.0 ms;
+  - 30.0 fps composed, 0 pool drops;
+  - relight pass GPU p50 0.70–0.80 ms, p95 2.25–2.80 ms (the GPU is shared
+    with CoreML);
+  - depth field GPU p50 about 1.0 ms;
+  - CPU encode 0.1 ms.
+- Display tests: 3/3 pass. In the occlusion test, one 35.9 ms iteration fell
+  in the "Controls covered" phase, at the moment CoreML finished creating its
+  session (t = 17.09 s). No depth existed yet, so relighting was passthrough;
+  this matches the Phase 3 note about CoreML compile stalls. Every judged
+  phase after Ready stayed at or below 17.7 ms.
+- Headless `--inference`: neutral relighting vs passthrough, maximum
+  difference 0.
+
+### Temporal stabilization and ablation (M4)
+- `DepthStabilizer` passes 12 tests:
+  - global jitter: 2.4% of the injected flicker remains (criterion ≤ 10%);
+  - small-noise flicker: 59% lower (criterion ≥ 40%; measured as the
+    frame-to-frame change, which is what is visible);
+  - a 500-result random walk of the true scale: output 2nd/98th percentiles
+    stay within [0, 1];
+  - reset, padding, bypass, scene-cut and no-allocation cases.
+- `CrossfadeState` passes 11 tests, plus a GPU sequence (see
+  `docs/architecture.md`).
+- **Deviation 1: the robust fit.** The plan named two Huber passes. The fit
+  is now least squares, then two Huber passes, then two Tukey biweight passes.
+  - Reason: with Huber alone, a near object (4% of the samples) biased the
+    slope to 0.78 for a true 1.15 change. The approved scale bound then
+    rejected the fit and forced a needless reset.
+  - Verification: with Tukey, the jitter test's applied slopes are within
+    [0.955, 1.145], and 2.4% of the flicker remains.
+- **Deviation 2: the ablation tool.** `relume_relight` computes lighting with
+  the CPU reference instead of a GPU readback.
+  - Reason: the metrics need float-precision gains (ε = 0.5/255), and an
+    8-bit gain readback is coarser than ε.
+  - Verification: the CPU reference matches the GPU passes (above).
+  - The temporal code it runs is the app's own (`DepthStabilizer`,
+    `CrossfadeState`).
+- **Deviation 3: scene changes.** A detected scene change switches the depth
+  field at once but keeps the effect's fade. The plan said the effect should
+  fade in again from passthrough.
+  - Reason: dipping to passthrough and fading back in is itself a visible
+    jump.
+  - Unchanged: a reset caused by incompatible depth (camera, size, transform
+    or worker) still goes to passthrough at once and fades in.
+  - Verification: G = 0 in the ablation; crossfade tests "HardCutNeverBlends"
+    and "ResetIsPassthroughAtOnceAndFadesBackIn".
+- **Ablation** (`docs/phase4_ablation.json`). Cadence: a result every 4
+  frames, arriving 5 frames late. The criteria were approved in advance:
+  F ≤ max(0.5 F_none, ε), S ≤ 1.5, R ≤ 6 frames, G = 0.
+
+  | Config | F | S | R | G | Pass |
+  |---|---|---|---|---|---|
+  | none | 0.00902 | 7.97 | 0 | 0 | no |
+  | A | 0.00889 | 7.88 | 0 | 0 | no |
+  | B (α 0.5) | 0.00371 | 3.87 | 0 | 1,945 | no |
+  | B+C (α 0.5, T 0.5) | 0.00377 | 0.56 | 2 | 2,338 | no |
+  | A+B (α 0.5) | 0.00368 | 3.84 | 0 | 0 | no |
+  | A+C (T 0.5) | 0.00910 | 0.34 | 2 | 0 | no |
+  | **A+B+C (α 0.5, T 0.5)** | **0.00374** | **0.56** | **2** | **0** | **yes** |
+  | A+B+C (α 0.3, T 1.0) | 0.00210 | 1.03 | 4 | 0 | yes |
+
+  - **Default:** A+B+C with α 0.5 and T = 0.5 × the interval. It is the
+    simplest passing configuration, with the lowest R among the passing ones;
+    no threshold was changed.
+  - B is what reduces flicker; C is what removes stepping.
+  - A barely changes flicker, but its fit is what detects scene cuts. Without
+    it, a cut ghosts (G = 1,945–2,832).
+  - The EMA adds no lag to large changes.
+  - Real bursts (local, ONNX Runtime CPU): unstabilized gain flicker is
+    0.00048 and 0.00072, below ε, so both pass in every configuration. The
+    model's frame-to-frame variation is much smaller in the lighting than in
+    the normalized depth view.
+- **Cost with the stabilizer** (Release, file source 1280×720 NV12, CoreML,
+  75 s):
+  - stabilize p50 1.35–1.40 ms, p95 1.50–1.60 ms per result (worker);
+  - render loop p95 17.05–17.15 ms, max 18.6 ms;
+  - 30.0 fps composed, 0 drops;
+  - relight GPU p50 0.6 ms, depth field GPU p50 0.8–0.9 ms;
+  - no scene changes or hard cuts on the static file source.
+- **ASan finding:** three lighting tests held a reference into a temporary
+  vector (heap-use-after-free). They passed in Debug by chance. Test-only
+  fix (`ef719d6`).
+- **Sanitizer reruns (2026-11-02):**
+  - TSan, first full run: 207/208. The 500-result drift test hit the 120 s
+    CTest timeout. It takes about 178 s under TSan alone (2 s in Release) and
+    raised no sanitizer report.
+  - Fix: `test_depth_stabilizer` now has a 600 s per-test timeout. That is a
+    time limit, not a tolerance.
+  - The second overnight run's five timeouts happened while the Mac slept on
+    battery. Wall-clock times were up to 10,214 s, for tests that take
+    seconds or a few minutes; `pmset` logs the sleep.
+  - Rerun under `caffeinate`: TSan stabilizer tests 12/12; ASan model
+    artifacts, native parity and stabilizer tests 14/14.
+  - Neither log contains a sanitizer report.
+  - `check_parity.py`: PASS, worst rel_max 3.27e-5, unchanged from Phase 3.

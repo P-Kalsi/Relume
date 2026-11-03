@@ -1,10 +1,11 @@
-# Relume architecture (as of Phase 3)
+# Relume architecture (as of Phase 4)
 
 Frames go from a camera (or file source) into a fixed 1280×720 output
-texture shown in two windows; the output is still camera passthrough
-(relighting is Phase 4). Since Phase 3, a depth worker runs Depth Anything V2
-Small on the newest frame with ONNX Runtime (CPU, or the CoreML EP), and the
-Controls window shows the depth beside the output, aligned pixel for pixel.
+texture shown in two windows. A depth worker runs Depth Anything V2 Small on
+the newest frame with ONNX Runtime (CPU, or the CoreML EP) and stabilizes the
+result over time. Since Phase 4, the main thread relights the camera image
+with one movable light, guided by that depth ("Relighting" below). Without
+matching depth the output is camera passthrough.
 
 ## Data flow
 
@@ -80,13 +81,14 @@ DepthDebugTexture (RGBA8, fixed 1280×720) ──► ImGui::Image → Controls w
 
 | Library | Contents | Platform code |
 |---|---|---|
-| `relume_core` | `VideoFrame`, CPU colour conversion, frame pool/slot, format negotiation, `FitRect`, status derivation, event queue, PPM I/O, latency histograms, opt-in frame saving and guided capture, the preprocessing contract (`Preprocessor`, `DepthToSource`), `IDepthEstimator`, `DepthWorker`, `InferenceController` | none |
+| `relume_core` | `VideoFrame`, CPU colour conversion, frame pool/slot, format negotiation, `FitRect`, status derivation, event queue, PPM I/O, latency histograms, opt-in frame saving and guided capture, the preprocessing contract (`Preprocessor`, `DepthToSource`), `IDepthEstimator`, `DepthWorker`, `InferenceController`, lighting math (CPU reference), `DepthStabilizer`, `CrossfadeState` | none |
 | `relume_inference` | `OnnxDepthEstimator` (ONNX Runtime C++ API; CPU and CoreML EP) | none (links ONNX Runtime) |
 | `relume_camera` | `FileSource`; `avfoundation.mm` on macOS, `camera_stub.cpp` elsewhere | `.mm` only |
-| `relume_render` | `GpuContext`, `OutputTexture`, `FrameUploader`, `OutputCompositor`, `Presenter`, `DepthDebugTexture`, `DepthUploader`, `DepthVisualizer`, readback (tests only); WGSL embedded at build time | none (WebGPU) |
+| `relume_render` | `GpuContext`, `OutputTexture`, `FrameUploader`, `OutputCompositor`, `Presenter`, `DepthDebugTexture`, `DepthUploader`, `DepthVisualizer`, `DepthFieldTexture`, `NormalPass`, `Relighter`, `GpuTimer`, readback (tests only); WGSL embedded at build time | none (WebGPU) |
 | `relume_imgui` | Dear ImGui 1.93.0 + GLFW/WebGPU backends | third party |
 | `Relume` (app) | `CaptureController`, `DepthTracker`, `DepthView`, windows, Controls UI, Output window, `main` | `platform/macos/*.mm` |
 | `relume_depth` (tool) | native preprocessing + ONNX Runtime from the command line: parity, benchmarks, CoreML evidence | none |
+| `relume_relight` (tool) | the temporal-stabilization ablation (metrics only) | none |
 
 The portable interfaces are `ICameraSystem` and `ICameraSource`
 (`include/relume/camera.hpp`). A Windows port would add a Media Foundation
@@ -234,7 +236,8 @@ acquires a `CAMetalDrawable`.
 - The loop is paced to the display refresh rate (`NSScreen.maximumFramesPerSecond`;
   60 Hz here), because there is no vsync.
 - Surfaces are untagged BGRA8, the same as the old `CAMetalLayer` default, so
-  passthrough colours are unchanged. Colour management is Phase 4.
+  passthrough colours are unchanged. Relighting does its colour work in the
+  shader ("Colour" under Relighting); the surfaces stay untagged.
 
 **`surface` (fallback): `SurfacePresenter`**, a `wgpu::Surface` on a
 `CAMetalLayer` (Fifo, vsync).
@@ -253,6 +256,125 @@ compositing pauses:
 
 Camera capture continues on its own queue during these pauses; frames are
 dropped as unread, not queued.
+
+## Relighting (Phase 4)
+
+```text
+DepthWorker thread: model run → DisplayRange → DepthStabilizer (stages A, B) → DepthResult.stable
+                                           ▼ (LatestDepthSlot, MatchDepth as before)
+Main thread (Relighting, src/app/app.cpp):
+  CrossfadeState (stage C) decides: snapshot? which slot to build? which two to show?
+  DepthUploader → NormalPass (normals.wgsl) → DepthFieldTexture slot (RGBA16Float, depth size)
+  camera texture + from/to fields + LightSettings → Relighter (relight.wgsl) → OutputTexture
+                                                                           └ debug views → DepthDebugTexture (Controls only)
+```
+
+**Coordinate convention** (`include/relume/lighting.hpp`):
+- Image uv runs 0..1 from the top left.
+- Lighting space has x right (`(u − 0.5)·2·aspect`), y **up** (`(0.5 − v)·2`;
+  image y is flipped here, once) and z toward the viewer (`relief · h`).
+- h is normalized depth, larger = nearer. The depth is treated as a height
+  field, not unprojected, because its scale and shift are unknown. `relief` is
+  a heuristic.
+- n = normalize(−∂z/∂x, −∂z/∂y, 1). Tests check that a ramp nearer on the
+  right faces left and a ramp nearer at the bottom faces up.
+
+**Depth field.**
+- One RGBA16Float texel per depth texel of the valid region, so padding is
+  never sampled. It holds the slopes of h, the smoothed h and a confidence.
+- The steps:
+  - a 5×5 bilateral filter (it doesn't blur across depth edges);
+  - gradients over 2 texels (large-scale shape, not fine noise);
+  - one-sided differences at discontinuities;
+  - lower confidence there.
+- The field stores slopes, not normals, so relief applies at shading time.
+  Changing it needs no rebuild and keeps the crossfade history valid.
+
+**Shading.** A bounded gain in linear light; the camera pixel already holds
+the room's light, so no albedo is estimated:
+- a wrapped Lambert key with distance attenuation and a warm/cool tint, plus
+  ambient;
+- the gain is clamped to [0.35, 1.8], so shadows are never totally black and
+  highlights never neon;
+- a low-strength Blinn–Phong highlight scaled by the pixel's luma;
+- a highlight-preserving boost above gain 1;
+- low-confidence pixels (depth edges) get a camera-facing normal, so
+  silhouettes don't halo.
+
+Neutral settings, fade 0 and Bypass reproduce passthrough: at most 1 level
+off, and exactly for an unscaled 16:9 source. Bypass is the compositor itself.
+No cast shadows, occlusion or catchlights are modelled or claimed.
+
+**Colour.**
+- Every texture on the colour path is non-sRGB: camera RGBA8Unorm,
+  OutputTexture RGBA8Unorm, the IOSurfaces BGRA8Unorm, the surface fallback
+  BGRA8Unorm. Nothing converts automatically.
+- `relight.wgsl` decodes sRGB once and encodes once.
+- The camera signal is BT.709-encoded and is decoded with the sRGB curve. The
+  two curves differ by up to 0.047 in linear light (at code 151; recorded by
+  `test_lighting_math`). That affects only relit, non-neutral output. No exact
+  colour accuracy is claimed.
+
+**Temporal stabilization.** These are the minimal stages, chosen by the
+ablation in `docs/phase4_ablation.json`.
+- **A (worker): scale/shift alignment.** The per-result percentile
+  normalization is aligned to the previous output with a robust affine fit,
+  leaking 2% toward identity per result so errors decay instead of drifting.
+  An untrustworthy fit resets instead of forcing alignment, and then the
+  renderer hard-cuts. A fit is untrustworthy with:
+  - fewer than 15% low-gradient pixels;
+  - near-zero variance;
+  - under 60% inliers;
+  - a median residual above 0.08;
+  - a scale outside [0.8, 1.25].
+- **B (worker): motion-adaptive EMA.** α is 0.5 for changes under 0.03 and
+  rises to 1 at 0.12, so moving heads, hands and cuts pass through at once.
+- **C (main thread): crossfade.** Each new result fades in over T (0.5 × the
+  median result interval, 60–200 ms). T is fixed when the crossfade starts.
+- **Measured** (synthetic static scene): flicker F drops from 0.0090 to 0.0037,
+  stepping S from 7.97 to 0.56, response lag is 2 frames, and there is no
+  ghosting after a scene cut. Without A, a cut ghosts, because without its
+  fit there is no scene-change detection.
+- **Not compensated:** depth is about 168 ms behind the image, so its
+  silhouette trails fast motion. That is Phase 5.
+
+**Three slots and ownership** (`include/relume/crossfade.hpp`).
+- Each field slot is `from`, `to` or free. A write (a new field, or a
+  snapshot) only ever targets a slot that is neither the current `from` nor
+  `to`.
+- If a result arrives mid-crossfade, the field shown at that instant is
+  snapshotted into the free slot and becomes the new `from`, so nothing snaps
+  backward.
+- WebGPU runs queue work in submission order, so a read submitted earlier
+  always finishes before a later write to the same slot. A GPU test submits a
+  whole overlap/burst/cut sequence with one wait and checks every step.
+
+**Resets (hard cut, never a blend).**
+- Passthrough at once: another camera, size, transform or worker (including a
+  provider change or inference turned off), or no matching depth (including
+  no camera image).
+- The new field at once, with no blend: a stabilizer reset (a new
+  configuration) or a scene change.
+- The effect fades in over 0.25 s after a reset to passthrough. It fades out
+  over 0.25 s when the depth is older than 1 s ("depth stale" in Controls).
+
+**Threads and cost.**
+- The worker adds the stabilizer: p50 1.4 ms, p95 1.6 ms per result (Release, file source).
+- The main thread does a 448² upload and a field pass (GPU p50 about 1 ms)
+  per result.
+- The relight pass (GPU p50 0.7–0.8 ms, Release, while CoreML runs) is redrawn
+  when the frame, the depth, the crossfade, the fade or a control changes.
+- GPU times come from timestamp queries mapped asynchronously; nothing waits.
+- Light controls are never filtered; they apply on the next frame.
+
+**Controls (engineering, Phase 4).** These are in the Controls window only:
+- light X/Y/Z, diffuse intensity, ambient, specular, tint and relief;
+- dragging on the output preview, with a marker drawn on the preview only;
+- Bypass (A/B) and the A, B and C toggles;
+- debug views: height, normals, gain and confidence.
+
+The Output window never shows any of them. Presets, Reset, Enable/Disable and
+the HUD are Phase 6.
 
 ## Privacy
 

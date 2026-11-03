@@ -147,6 +147,24 @@ $R run-tensors --list jobs.txt                   # many "<in.npy> <out.npy>" lin
 # --profile <prefix> (ORT profiling JSON) --cache <dir> --compute-plan --verbose
 ```
 
+## 3c. Temporal-stabilization ablation (Phase 4)
+
+`relume_relight` replays synthetic depth sequences (and, optionally, local
+camera bursts run through ONNX Runtime CPU) through the app's stabilizer and
+crossfade, and prints flicker F, stepping S, response lag R and ghost area G
+per configuration. It writes only the optional metrics JSON; frames are read
+locally and never written.
+
+```sh
+build/release/tools/relume_relight/relume_relight \
+  --burst third_party/assets/local_frames/burst_a --burst third_party/assets/local_frames/burst_b \
+  --json docs/phase4_ablation.json     # about 45 s
+```
+
+Relighting checks: `test_lighting_math`, `test_relight_gpu`, `test_crossfade`
+and `test_depth_stabilizer` run in every `ctest` preset. With `--inference`,
+the headless run also checks neutral relighting against passthrough.
+
 ## 4. Manual probes
 
 ```sh
