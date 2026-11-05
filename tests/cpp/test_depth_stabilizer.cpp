@@ -136,6 +136,7 @@ TEST(DepthStabilizer, AlignmentRemovesGlobalJitter) {
     const Step step = Feed(s, d, kStretch);
     const std::vector<float> p = Normalized(d, step.range);
     if (i > 0) {
+      EXPECT_EQ(step.report.rejection, FitRejection::kNone) << "result " << i;
       min_a = std::min(min_a, step.report.fitted ? step.report.a : 1.0f);
       max_a = std::max(max_a, step.report.fitted ? step.report.a : 1.0f);
       EXPECT_FALSE(step.report.scene_change)
@@ -366,6 +367,7 @@ TEST(DepthStabilizer, CutToAnUnrelatedSceneResetsWithinOneResult) {
   EXPECT_TRUE(step.report.scene_change) << "inliers " << step.report.inlier_fraction << ", median residual "
                                         << step.report.median_residual << ", a " << step.report.a;
   EXPECT_TRUE(step.report.reset);
+  EXPECT_NE(step.report.rejection, FitRejection::kNone) << "a scene change always names its reason";
   EXPECT_LE(MeanAbs(step.out, Normalized(b, step.range), kStretch, 0, kStretch.new_h), 1e-7);
 }
 
