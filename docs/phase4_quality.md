@@ -73,7 +73,7 @@ Live numbers (session 1, stats intervals after Ready):
 - relight GPU p50 0.7-0.8 ms, p95 2.2-2.65 ms; depth field GPU p50 0.8-0.95 ms;
 - stabilize p50 2.3-2.35 ms, p95 2.5-2.75 ms (under 3 ms);
 - memory 710-712 MiB;
-- **662 scene changes out of 30,892 depth fields (2.1%)**, each a hard cut without a crossfade (open issue 3: check whether motion triggers them and whether they are visible).
+- **662 scene changes out of 30,892 depth fields (2.1%)**, each a hard cut without a crossfade (open issue 3: check whether motion triggers them and whether they are visible). Since `9e76efc`/`1fe5c69` the stats log counts scene changes by rejection reason (too few pixels, flat, no inliers, few inliers, high residual, scale); the next camera session will show which check fires.
 
 ## Live camera numbers (from `[stats]`, 120 s after Ready)
 
