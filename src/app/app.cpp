@@ -582,6 +582,13 @@ class Relighting {
         field_timer_.ms().Percentile(0.95),
         static_cast<unsigned long long>(relight_timer_.unmeasured() + field_timer_.unmeasured()),
         encode_ms_.Percentile(0.5), encode_ms_.Percentile(0.95));
+    if (scene_changes_ > 0) {
+      std::printf("[stats] relight scene changes by reason (total):");
+      for (std::size_t i = 1; i < kFitRejectionCount; ++i) {
+        std::printf(" %s %llu%s", ToString(static_cast<FitRejection>(i)),
+                    static_cast<unsigned long long>(rejections_[i]), i + 1 < kFitRejectionCount ? "," : "\n");
+      }
+    }
     last_relit_frames_ = relit_frames_;
     last_fields_ = fields_;
     relight_timer_.ms().Reset();
@@ -595,7 +602,10 @@ class Relighting {
     // The stabilizer restarted its history (a new configuration) or could
     // not trust its fit (a scene change): no blend with the previous field.
     const bool hard_cut = result.stabilizer.reset;
-    scene_changes_ += result.stabilizer.scene_change ? 1 : 0;
+    if (result.stabilizer.scene_change) {
+      ++scene_changes_;
+      ++rejections_[static_cast<std::size_t>(result.stabilizer.rejection)];
+    }
     stabilize_ms_.Record(result.stabilize_ms);
     const CrossfadeState::Update u = crossfade_.OnResult(now_s, hard_cut);
     if (u.snapshot_slot != CrossfadeState::kNone) {
@@ -661,6 +671,7 @@ class Relighting {
   std::uint64_t fields_ = 0, last_fields_ = 0;
   std::uint64_t relit_frames_ = 0, last_relit_frames_ = 0;
   std::uint64_t scene_changes_ = 0;
+  std::array<std::uint64_t, kFitRejectionCount> rejections_{};
   LatencyHistogram encode_ms_;
   LatencyHistogram stabilize_ms_;  // measured on the worker, recorded here per result used
 };
