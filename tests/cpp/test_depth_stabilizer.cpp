@@ -166,6 +166,7 @@ TEST(DepthStabilizer, NormalizationJumpBeyondTheScaleBoundIsASceneChange) {
   }
   const Step step = Feed(s, near, kStretch);
   EXPECT_TRUE(step.report.scene_change) << "fit a outside [0.8, 1.25] must not be forced";
+  EXPECT_EQ(step.report.rejection, FitRejection::kScale);
   EXPECT_LE(MeanAbs(step.out, Normalized(near, step.range), kStretch, 0, kStretch.new_h), 1e-7);
 }
 
@@ -380,6 +381,7 @@ TEST(DepthStabilizer, TooFewLowGradientPixelsResetsWithoutAFit) {
   EXPECT_TRUE(step.report.scene_change);
   EXPECT_FALSE(step.report.fitted);
   EXPECT_LT(step.report.valid_fraction, 0.15f);
+  EXPECT_EQ(step.report.rejection, FitRejection::kTooFewPixels);
   EXPECT_TRUE(std::all_of(step.out.begin(), step.out.end(), [](float v) { return std::isfinite(v); }));
 }
 

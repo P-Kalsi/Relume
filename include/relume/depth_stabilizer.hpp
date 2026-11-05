@@ -37,6 +37,7 @@
 
 #include "relume/preprocess.hpp"
 
+#include <cstddef>
 #include <cstdint>
 #include <vector>
 
@@ -60,6 +61,19 @@ struct StabilizerConfig {
   bool operator==(const StabilizerConfig&) const = default;
 };
 
+// Why stage A rejected a fit (the first check that failed).
+enum class FitRejection : std::uint8_t {
+  kNone,
+  kTooFewPixels,   // below min_valid_fraction of low-gradient pixels
+  kFlat,           // near-zero variance (the slope is not determined)
+  kNoInliers,      // nothing is close to the fit
+  kFewInliers,     // below min_inlier_fraction
+  kHighResidual,   // median residual above max_median_residual
+  kScale,          // a outside [min_scale, max_scale]
+};
+inline constexpr std::size_t kFitRejectionCount = 7;
+const char* ToString(FitRejection rejection);
+
 struct StabilizerReport {
   bool bypassed = false;      // unusable input: no output
   bool reset = false;         // the history restarted (output = p)
@@ -70,6 +84,7 @@ struct StabilizerReport {
   float valid_fraction = 0.0f;   // of the region, in the low-gradient mask
   float inlier_fraction = 0.0f;
   float median_residual = 0.0f;
+  FitRejection rejection = FitRejection::kNone;  // set when scene_change is
 };
 
 class DepthStabilizer {

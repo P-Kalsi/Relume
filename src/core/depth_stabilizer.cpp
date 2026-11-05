@@ -14,6 +14,19 @@ float Smoothstep(float edge0, float edge1, float x) {
 
 }  // namespace
 
+const char* ToString(FitRejection rejection) {
+  switch (rejection) {
+    case FitRejection::kNone: return "none";
+    case FitRejection::kTooFewPixels: return "too few pixels";
+    case FitRejection::kFlat: return "flat";
+    case FitRejection::kNoInliers: return "no inliers";
+    case FitRejection::kFewInliers: return "few inliers";
+    case FitRejection::kHighResidual: return "high residual";
+    case FitRejection::kScale: return "scale";
+  }
+  return "?";
+}
+
 void DepthStabilizer::SetConfig(const StabilizerConfig& config) {
   if (!(config == config_)) {
     config_ = config;
@@ -130,6 +143,7 @@ bool DepthStabilizer::Fit(StabilizerReport& report, float& a, float& b) {
   const std::size_t count = fit_x_.size();
   report.valid_fraction = sampled == 0 ? 0.0f : static_cast<float>(count) / static_cast<float>(sampled);
   if (count < 16 || report.valid_fraction < config_.min_valid_fraction) {
+    report.rejection = FitRejection::kTooFewPixels;
     return false;
   }
 
@@ -159,7 +173,8 @@ bool DepthStabilizer::Fit(StabilizerReport& report, float& a, float& b) {
     vyy /= sw;
     vxy /= sw;
     if (vxx < 1e-6 || vyy < 1e-6) {
-      return false;  // nearly constant: the slope is not determined
+      report.rejection = FitRejection::kFlat;  // the slope is not determined
+      return false;
     }
     a = static_cast<float>(vxy / vxx);
     b = static_cast<float>(my - vxy / vxx * mx);
@@ -177,7 +192,8 @@ bool DepthStabilizer::Fit(StabilizerReport& report, float& a, float& b) {
       total += fit_w_[i];
     }
     if (!(total > 0.0)) {
-      return false;  // nothing is close to the fit
+      report.rejection = FitRejection::kNoInliers;
+      return false;
     }
   }
   report.fitted = true;
@@ -191,8 +207,14 @@ bool DepthStabilizer::Fit(StabilizerReport& report, float& a, float& b) {
   const auto mid = residuals_.begin() + static_cast<std::ptrdiff_t>(count / 2);
   std::nth_element(residuals_.begin(), mid, residuals_.end());
   report.median_residual = *mid;
-  return report.inlier_fraction >= config_.min_inlier_fraction &&
-         report.median_residual <= config_.max_median_residual && a >= config_.min_scale && a <= config_.max_scale;
+  if (report.inlier_fraction < config_.min_inlier_fraction) {
+    report.rejection = FitRejection::kFewInliers;
+  } else if (report.median_residual > config_.max_median_residual) {
+    report.rejection = FitRejection::kHighResidual;
+  } else if (a < config_.min_scale || a > config_.max_scale) {
+    report.rejection = FitRejection::kScale;
+  }
+  return report.rejection == FitRejection::kNone;
 }
 
 }  // namespace relume
