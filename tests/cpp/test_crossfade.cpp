@@ -227,6 +227,24 @@ TEST(Crossfade, DisabledMakesEveryResultAHardCut) {
   }
 }
 
+TEST(Crossfade, TogglingCrossfadeResetsToPassthrough) {
+  Model m;
+  m.Result(0.0, 1.0f);
+  m.Shown(0.5);
+  ASSERT_TRUE(m.last.active);
+  CrossfadeConfig off = m.state.config();
+  off.enabled = false;
+  m.state.SetConfig(off);
+  EXPECT_FALSE(m.state.Advance(0.5, 0.0).active) << "a change of `enabled` never blends with old history";
+  EXPECT_EQ(m.state.resets(), 1u);
+  CrossfadeConfig slower = off;
+  slower.duration_factor = 1.0;
+  m.Result(0.6, 2.0f);
+  m.state.SetConfig(slower);  // `enabled` unchanged: no reset
+  EXPECT_TRUE(m.state.Advance(0.6, 0.0).active);
+  EXPECT_EQ(m.state.resets(), 1u);
+}
+
 TEST(Crossfade, RandomSequencesKeepOwnershipAndContinuity) {
   std::mt19937 rng(1234);
   std::uniform_real_distribution<double> gap(0.0, 0.4);
