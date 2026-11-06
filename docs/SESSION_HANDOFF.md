@@ -1,4 +1,36 @@
-# Session handoff: end of Phase 3 (2026-10-28)
+# Session handoff: Phase 4 in progress (2026-11-05)
+
+Phase 4 (relighting) is in progress and **not complete**. M0–M4 are done,
+verified and pushed (`origin/main`). M5, the live-camera evaluation with the
+developer, is paused after Section 2 of `docs/phase4_quality.md`. Still to
+do: Sections 3–8, the open issues below, M6 docs, and the final regression
+run (Debug, Release, ASan, TSan, display, parity). Phase 5 is not started.
+
+## Phase 4 state
+- **Design:** `docs/architecture.md`, "Relighting".
+- **Decisions, the three approved deviations and the ablation:**
+  `docs/decisions.md` (Phase 4) and `docs/phase4_ablation.json`.
+- **Default temporal configuration:** A+B+C (α 0.5, crossfade 0.5 × the
+  interval). It is the simplest configuration meeting every approved
+  threshold.
+- **Last full checks (2026-11-02):** Debug and Release 208/208, display 3/3,
+  Python 77/77, parity PASS.
+  - ASan and TSan have no sanitizer reports. The tests that timed out (one
+    under TSan, a 120 s limit; and while the Mac slept) pass on rerun under
+    `caffeinate`.
+  - `test_depth_stabilizer` has a 600 s per-test timeout.
+
+## Open issues from the camera session (investigate before completion)
+1. **Ghost outline and face seam during head motion.** Likely cause: the
+   distance term steps sharply at the old silhouette (depth lags about
+   180 ms).
+2. **Shading reads as face-area brightness, not face shape.** The face's
+   depth relief is small after whole-frame normalization.
+3. **662 scene-change hard cuts (2.1%) live.** The stats log now counts them
+   by rejection reason (`9e76efc`, `1fe5c69`).
+
+## Phase 3 summary (2026-10-28)
+
 
 Phase 3 (native depth inference) is complete, verified, and **approved by
 the developer on 2026-10-28**. The next phase is **Phase 4**; the developer
