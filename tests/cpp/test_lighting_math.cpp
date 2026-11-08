@@ -280,6 +280,18 @@ TEST(LightingMath, TintKeepsLuminance) {
   EXPECT_LT(TintColor(-1.0f).x, TintColor(-1.0f).z);  // cool
 }
 
+TEST(LightingMath, NeutralTintGivesEqualChannelGains) {
+  const Grid g = Sphere(64, 36);
+  const std::vector<FieldTexel> f = Field(g);
+  LightSettings s;
+  s.tint = 0.0f;
+  for (std::uint32_t x = 0; x < g.width; x += 7) {
+    const Shading sh = ComputeShading(At(f, g, x, 18), 0.5f, 0.5f, s, kAspect);
+    EXPECT_NEAR(sh.gain.x, sh.gain.y, 1e-6f);
+    EXPECT_NEAR(sh.gain.y, sh.gain.z, 1e-6f);
+  }
+}
+
 // Documents (does not fix) the transfer-curve approximation: the camera
 // signal is BT.709-encoded and Relume decodes it with the sRGB curve.
 TEST(LightingMath, RecordsBt709VersusSrgbDecodeDifference) {
