@@ -292,6 +292,23 @@ TEST(LightingMath, NeutralTintGivesEqualChannelGains) {
   }
 }
 
+// Attenuation is normalized to the point straight under the light on the
+// nearest plane: there a camera-facing surface gets ambient + intensity.
+TEST(LightingMath, KeyStrengthIsNormalizedUnderTheLight) {
+  LightSettings s;
+  s.x = 0.5f;
+  s.y = 0.5f;
+  s.specular = 0.0f;
+  s.relief = 0.0f;  // flat: the surface is at z = 0, the light at z = s.z
+  const FieldTexel flat{0.0f, 0.0f, 0.0f, 1.0f};
+  const Shading sh = ComputeShading(flat, 0.5f, 0.5f, s, kAspect);
+  EXPECT_NEAR(sh.gain.y, s.ambient + s.intensity, 1e-5f);
+  // Farther from the light: less key light, never below ambient.
+  const Shading edge = ComputeShading(flat, 0.0f, 0.5f, s, kAspect);
+  EXPECT_LT(edge.gain.y, sh.gain.y);
+  EXPECT_GE(edge.gain.y, s.ambient);
+}
+
 // Documents (does not fix) the transfer-curve approximation: the camera
 // signal is BT.709-encoded and Relume decodes it with the sRGB curve.
 TEST(LightingMath, RecordsBt709VersusSrgbDecodeDifference) {
