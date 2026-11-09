@@ -29,3 +29,6 @@ models/*
 .env.*
 !.env.example
 third_party/
+
+# App run logs (camera names, local paths); keep them out of Git
+/*.log
