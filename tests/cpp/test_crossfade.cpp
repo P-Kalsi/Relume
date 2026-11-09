@@ -227,6 +227,20 @@ TEST(Crossfade, DisabledMakesEveryResultAHardCut) {
   }
 }
 
+// T is the factor times the median of the recent intervals, so one outlier
+// gap does not stretch the crossfade.
+TEST(Crossfade, DurationFollowsTheMedianInterval) {
+  Model m;
+  double now = 0.0;
+  m.Result(now, 0.0f);
+  for (const double gap : {0.14, 0.14, 0.9, 0.14}) {
+    now += gap;
+    m.Result(now, static_cast<float>(now));
+  }
+  // Intervals 0.14, 0.14, 0.9, 0.14: median 0.14, T = 0.5 x 0.14 = 70 ms.
+  EXPECT_NEAR(m.state.duration_s(), 0.07, 1e-9);
+}
+
 TEST(Crossfade, TogglingCrossfadeResetsToPassthrough) {
   Model m;
   m.Result(0.0, 1.0f);
