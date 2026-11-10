@@ -67,6 +67,19 @@ FaceTime HD, Release, CoreML CPUAndGPU, default controls. Ratings so far:
 
 Not yet done: Sections 3-8.
 
+### Open issue 1: first measurements (2026-11-09)
+- A **Depth falloff** control (0-1, default 1, unchanged lighting) sets how
+  much depth height enters the light's distance.
+- Across a depth edge, the gain steps by 0.18 at falloff 1 and 0 at 0
+  (`test_lighting_math`).
+- In the moving-head ablation scene, the sharpest gain step falls only from
+  0.283 to 0.235 (`relume_relight --depth-falloff 0`). The distance falloff
+  explains part of the seam; most of the rest comes from the normals at the
+  head's own silhouette.
+- Next step (not done): soften the gain across silhouettes in screen space,
+  then check it live. The slider is meanwhile an A/B aid for the camera
+  session.
+
 Live numbers (session 1, stats intervals after Ready):
 - capture and composed 30.0 fps; pool drops 0; render loop p95 17.1 ms, max 18.1 ms;
 - depth 6.3-6.5 results/s, age p50 182 ms, lag p50 5 frames;
