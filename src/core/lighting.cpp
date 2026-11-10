@@ -49,6 +49,7 @@ LightSettings LightSettings::Clamped() const {
   s.specular = std::clamp(specular, 0.0f, 0.4f);
   s.tint = std::clamp(tint, -1.0f, 1.0f);
   s.relief = std::clamp(relief, 0.0f, 1.5f);
+  s.depth_falloff = std::clamp(depth_falloff, 0.0f, 1.0f);
   return s;
 }
 
@@ -176,7 +177,7 @@ Vec3 LightPosition(const LightSettings& s, float aspect) {
 Shading ComputeShading(const FieldTexel& field, float u, float v, const LightSettings& s, float aspect) {
   const float conf = std::clamp(field.conf, 0.0f, 1.0f);
   const Vec3 n = FieldNormal(field, s.relief);
-  const Vec3 p = LightingPosition(u, v, field.h, aspect, s.relief);
+  const Vec3 p = LightingPosition(u, v, field.h * s.depth_falloff, aspect, s.relief);
   const Vec3 light = LightPosition(s, aspect);
   const Vec3 to_light{light.x - p.x, light.y - p.y, light.z - p.z};
   const float distance = std::sqrt(Dot(to_light, to_light));

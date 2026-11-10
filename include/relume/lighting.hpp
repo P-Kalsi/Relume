@@ -27,7 +27,8 @@
 //   g    = conf * clamp(relief * slope, -kMaxGradient, kMaxGradient)
 //   n'   = normalize(-g.x, -g.y, 1)                low confidence (depth edges) -> camera facing
 //   diff = max((dot(n', l) + kWrap) / (1 + kWrap), 0)
-//   att  = min(Attenuation(|L - P|) / Attenuation(light z above the plane), kMaxAttenuation)
+//   att  = min(Attenuation(|L - P|) / Attenuation(light z above the plane), kMaxAttenuation),
+//          with P.z = relief * h * depth_falloff
 //   gain = clamp(ambient + intensity * diff * att * tint, kMinGain, kMaxGain)
 //   spec = specular * pow(max(dot(n', hv), 0), kShininess) * att * conf * luma(lin)
 //   g    = mix(1, gain, fade)                      per channel
@@ -62,6 +63,11 @@ struct LightSettings {
   float specular = 0.08f;   // [0, 0.4]: low-strength highlight
   float tint = 0.0f;        // [-1, 1]: cool (-1) to warm (+1), an artistic colour, not a temperature
   float relief = 0.6f;      // [0, 1.5]: height of the depth range in lighting units (heuristic)
+  // [0, 1]: how much depth height enters the light's distance. 1: the
+  // surface position includes relief * h (nearer is closer to the light).
+  // 0: distance from the image position only, so a depth edge never makes a
+  // step in the falloff (the normals still shape the light). Open issue 1.
+  float depth_falloff = 1.0f;
 
   LightSettings Clamped() const;
   bool operator==(const LightSettings&) const = default;

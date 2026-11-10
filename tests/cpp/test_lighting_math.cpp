@@ -309,6 +309,33 @@ TEST(LightingMath, KeyStrengthIsNormalizedUnderTheLight) {
   EXPECT_GE(edge.gain.y, s.ambient);
 }
 
+// Open issue 1: with depth falloff 0, a depth step makes no step in the
+// lighting on its flat sides (only the normals near the edge still matter,
+// and their confidence is low there).
+TEST(LightingMath, ZeroDepthFalloffRemovesTheStepAtADepthEdge) {
+  const Grid g = MakeGrid(64, 36, [](float u, float) { return u < 0.5f ? 0.2f : 0.9f; });
+  const std::vector<FieldTexel> f = Field(g);
+  LightSettings s;
+  s.specular = 0.0f;
+  s.relief = 1.0f;
+  const auto step = [&](float falloff) {
+    s.depth_falloff = falloff;
+    // Two flat points either side of the edge, 6 texels away, equally far
+    // from a light centred on the edge.
+    s.x = 0.5f;
+    s.y = 0.5f;
+    const float left = ComputeShading(At(f, g, 26, 18), 26.5f / 64.0f, 0.5f, s, kAspect).gain.y;
+    const float right = ComputeShading(At(f, g, 37, 18), 37.5f / 64.0f, 0.5f, s, kAspect).gain.y;
+    return std::abs(right - left);
+  };
+  const float with_depth = step(1.0f);
+  const float without = step(0.0f);
+  std::printf("gain step across a depth edge: falloff 1 %.4f, falloff 0 %.4f\n", static_cast<double>(with_depth),
+              static_cast<double>(without));
+  EXPECT_GT(with_depth, 0.05f) << "the step that shows as a seam when depth lags";
+  EXPECT_LT(without, 1e-4f);
+}
+
 // Documents (does not fix) the transfer-curve approximation: the camera
 // signal is BT.709-encoded and Relume decodes it with the sRGB curve.
 TEST(LightingMath, RecordsBt709VersusSrgbDecodeDifference) {
