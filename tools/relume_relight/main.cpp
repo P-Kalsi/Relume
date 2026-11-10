@@ -110,8 +110,11 @@ Grid Lerp(const Grid& a, const Grid& b, float t) {
   return out;
 }
 
+float g_depth_falloff = 1.0f;  // --depth-falloff
+
 Gains Shade(const Grid& grid, float fade) {
-  const LightSettings light;  // the default light
+  LightSettings light;  // the default light
+  light.depth_falloff = g_depth_falloff;
   Gains gains(grid.size());
   for (std::uint32_t gy = 0; gy < kGridH; ++gy) {
     for (std::uint32_t gx = 0; gx < kGridW; ++gx) {
@@ -274,6 +277,19 @@ int GhostArea(const Replay& r, std::size_t k) {
     }
   }
   return count;
+}
+
+// The sharpest gain step between horizontal neighbours in a frame: a seam
+// shows up as a large value (open issue 1).
+double SharpestStep(const Gains& g) {
+  double worst = 0.0;
+  for (std::uint32_t y = 0; y < kGridH; ++y) {
+    for (std::uint32_t x = 1; x < kGridW; ++x) {
+      worst = std::max(worst, static_cast<double>(std::abs(g[std::size_t{y} * kGridW + x] -
+                                                           g[std::size_t{y} * kGridW + x - 1])));
+    }
+  }
+  return worst;
 }
 
 // --- Scenes ---
@@ -451,8 +467,11 @@ int main(int argc, char** argv) {
       model = argv[++i];
     } else if (arg == "--json" && i + 1 < argc) {
       json_path = argv[++i];
+    } else if (arg == "--depth-falloff" && i + 1 < argc) {
+      g_depth_falloff = std::clamp(std::stof(argv[++i]), 0.0f, 1.0f);
     } else {
-      std::fprintf(stderr, "usage: relume_relight [--burst DIR]... [--model PATH] [--json PATH]\n");
+      std::fprintf(stderr,
+                   "usage: relume_relight [--burst DIR]... [--model PATH] [--json PATH] [--depth-falloff 0..1]\n");
       return 2;
     }
   }
@@ -484,8 +503,9 @@ int main(int argc, char** argv) {
     }
   }
 
-  std::printf("Cadence: a result every %d frames at %.0f fps (%.1f/s), arriving %d frames late. eps = %.5f\n",
-              kInterval, kFps, kFps / kInterval, kLag, kEps);
+  std::printf("Cadence: a result every %d frames at %.0f fps (%.1f/s), arriving %d frames late. eps = %.5f. "
+              "Depth falloff %.2f\n",
+              kInterval, kFps, kFps / kInterval, kLag, kEps, static_cast<double>(g_depth_falloff));
   std::printf("%-22s | %-27s | %-14s | %-7s | %-5s | %-13s", "config", "static: F (S; upd/other)", "step: R (frames)",
               "cut: G", "pass", "info hand: F");
   for (const auto& [name, unused] : burst_scenes) {
@@ -511,6 +531,7 @@ int main(int argc, char** argv) {
     const Replay step_run = Run(step, c, 20);
     double change = 0.0;
     const int r = ResponseLag(step_run, 12, change);
+    const double seam = SharpestStep(step_run.frames.back());
     const Replay cut_run = Run(cut, c, 20);
     const int g = GhostArea(cut_run, 12);
     const Temporal hand_t = Measure(Run(hand, c, 20), warm, 0, kGridH / 2);
@@ -531,8 +552,9 @@ int main(int argc, char** argv) {
     }
     char r_text[32];
     std::snprintf(r_text, sizeof(r_text), r < 0 ? "n/m" : "%d (chg %.3f)", r, change);
-    std::printf("%-22s | %.5f (%5.2f; %.5f/%.5f) | %-16s | %-7d | %-5s | %.5f      ", c.name.c_str(), st.flicker,
-                st.stepping, st.update_mean, st.other_mean, r_text, g, pass ? "yes" : "no", hand_t.flicker);
+    std::printf("%-22s | %.5f (%5.2f; %.5f/%.5f) | %-16s | %-7d | %-5s | %.5f | seam %.3f ", c.name.c_str(),
+                st.flicker, st.stepping, st.update_mean, st.other_mean, r_text, g, pass ? "yes" : "no", hand_t.flicker,
+                seam);
     for (const Temporal& bt : burst_t) {
       std::printf(" | %.5f (%5.2f)           ", bt.flicker, bt.stepping);
     }
