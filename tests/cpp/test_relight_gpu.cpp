@@ -230,16 +230,17 @@ TEST_F(RelightGpuTest, RelitOutputMatchesTheCpuReference) {
     ASSERT_TRUE(ReadbackFieldTexture(*gpu_, to, f_to));
 
     struct Mix {
-      float blend, fade;
+      float blend, fade, falloff;
     };
-    for (const Mix m : {Mix{1.0f, 1.0f}, Mix{0.3f, 0.6f}}) {
-      SCOPED_TRACE(testing::Message() << "blend " << m.blend << ", fade " << m.fade);
+    for (const Mix m : {Mix{1.0f, 1.0f, 1.0f}, Mix{0.3f, 0.6f, 1.0f}, Mix{1.0f, 1.0f, 0.0f}}) {
+      SCOPED_TRACE(testing::Message() << "blend " << m.blend << ", fade " << m.fade << ", falloff " << m.falloff);
       RelightFrame frame;
       frame.from = &from;
       frame.to = &to;
       frame.blend = m.blend;
       frame.fade = m.fade;
       frame.light = StrongLight();
+      frame.light.depth_falloff = m.falloff;
       const std::vector<std::uint8_t> relit = Relit(camera, frame);
       const PixelRect rect = FitRect(c.width, c.height, OutputTexture::kWidth, OutputTexture::kHeight);
       int worst = 0;
@@ -262,8 +263,8 @@ TEST_F(RelightGpuTest, RelitOutputMatchesTheCpuReference) {
           }
         }
       }
-      std::printf("%s (blend %.1f, fade %.1f): relit max |GPU - CPU| %d\n", c.name, static_cast<double>(m.blend),
-                  static_cast<double>(m.fade), worst);
+      std::printf("%s (blend %.1f, fade %.1f, falloff %.0f): relit max |GPU - CPU| %d\n", c.name,
+                  static_cast<double>(m.blend), static_cast<double>(m.fade), static_cast<double>(m.falloff), worst);
       EXPECT_LE(worst, 2);
       EXPECT_TRUE(bars_black);
     }

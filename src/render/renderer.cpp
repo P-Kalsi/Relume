@@ -816,7 +816,7 @@ bool Relighter::Draw(Target& target, const wgpu::TextureView& view, const wgpu::
                                         std::clamp(frame.blend, 0.0f, 1.0f),
                                         std::clamp(frame.fade, 0.0f, 1.0f),
                                         static_cast<float>(mode),
-                                        0.0f};
+                                        s.depth_falloff};
   gpu_.queue().WriteBuffer(target.params, 0, values.data(), sizeof(values));
   const PixelRect rect = FitRect(camera_texture.GetWidth(), camera_texture.GetHeight(), OutputTexture::kWidth,
                                  OutputTexture::kHeight);

@@ -26,7 +26,8 @@ struct Light {
   shade : vec4f,     // intensity, ambient, specular, relief
   tint : vec4f,      // tint rgb (luminance 1); w: light height above the nearest depth (settings z)
   control : vec4f,   // x: crossfade weight from -> to; y: fade; z: view (0 relit, 1 height, 2 normals,
-                     // 3 gain, 4 confidence; views other than 0 are for the Controls window only)
+                     // 3 gain, 4 confidence; views other than 0 are for the Controls window only);
+                     // w: depth falloff (how much height enters the light's distance)
 };
 
 @group(0) @binding(0) var linear_sampler : sampler;
@@ -94,7 +95,7 @@ fn compute_shading(field : vec4f, uv : vec2f) -> Shading {
   let relief = light.shade.w;
   let conf = clamp(field.w, 0.0, 1.0);
   let n = field_normal(field, relief);
-  let p = vec3f((uv.x - 0.5) * 2.0 * aspect, (0.5 - uv.y) * 2.0, relief * field.z);
+  let p = vec3f((uv.x - 0.5) * 2.0 * aspect, (0.5 - uv.y) * 2.0, relief * field.z * light.control.w);
   let to_light = light.position.xyz - p;
   let distance = sqrt(dot(to_light, to_light));
   let l = safe_normalize(to_light);
