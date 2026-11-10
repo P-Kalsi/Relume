@@ -355,6 +355,12 @@ void ControlWindow::BuildLighting(const ControlsModel& model, ControlsActions& a
     ImGui::SameLine();
     ImGui::SetNextItemWidth(width);
     changed |= ImGui::SliderFloat("Relief (heuristic)", &l.relief, 0.0f, 1.5f, "%.2f");
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(width);
+    changed |= ImGui::SliderFloat("Depth falloff", &l.depth_falloff, 0.0f, 1.0f, "%.2f");
+    if (ImGui::IsItemHovered()) {
+      ImGui::SetTooltip("How much depth changes the light's distance. 0 avoids a seam at a lagging silhouette.");
+    }
     ImGui::TreePop();
   }
   if (changed) {
