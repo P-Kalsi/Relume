@@ -76,9 +76,17 @@ Not yet done: Sections 3-8.
   0.283 to 0.235 (`relume_relight --depth-falloff 0`). The distance falloff
   explains part of the seam; most of the rest comes from the normals at the
   head's own silhouette.
-- Next step (not done): soften the gain across silhouettes in screen space,
-  then check it live. The slider is meanwhile an A/B aid for the camera
-  session.
+- **Silhouette confidence (2026-11-12):** normals now fade to camera-facing
+  within 6 texels of a depth jump (range of h over 24 samples above 0.12).
+  The seam metric drops from 0.283 to 0.215 at falloff 1, and to 0.176 with
+  falloff 0. It is 24-38% lower but not gone: what remains is the
+  head-vs-wall difference itself while the depth lags (about 180 ms). The
+  face's interior shading is unchanged, and every approved temporal threshold
+  still passes.
+- Still to do: check it live (Section 1d again, plus head movement in
+  Section 5). If the seam is still visible, the remaining options are a
+  screen-space blur of the gain across silhouettes or motion compensation
+  (Phase 5).
 
 Live numbers (session 1, stats intervals after Ready):
 - capture and composed 30.0 fps; pool drops 0; render loop p95 17.1 ms, max 18.1 ms;
