@@ -12,11 +12,14 @@
 //            border); one-sided (the smaller side) where a side exceeds the
 //            edge threshold
 //   out    = clamp(slope / units, -kMaxSlope, kMaxSlope)
-//   conf   = 1 - smoothstep(t, 2t, largest side change)
+//   conf   = min(1 - smoothstep(t, 2t, largest side change),
+//                1 - smoothstep(s, 2s, range of h within 6 texels))
 
 const kRadius : i32 = 2;
 const kSigmaSpatial : f32 = 1.5;
 const kEdge : f32 = 0.06;
+const kSilhouetteRadius : i32 = 6;
+const kSilhouette : f32 = 0.12;
 const kSigmaRange : f32 = 0.06;
 const kStep : i32 = 2;
 const kMaxSlope : f32 = 8.0;
@@ -117,7 +120,24 @@ fn fs_main(@builtin(position) position : vec4f) -> @location(0) vec4f {
   let sy = slope(c, smooth_at(vec2i(p.x, y0)), p.y - y0, smooth_at(vec2i(p.x, y1)), y1 - p.y);
   let gx = clamp(sx.value / params.units.x, -kMaxSlope, kMaxSlope);
   let gy = clamp(sy.value / params.units.y, -kMaxSlope, kMaxSlope);
-  let conf = 1.0 - smoothstep(kEdge, 2.0 * kEdge, max(sx.edge, sy.edge));
+  let local = 1.0 - smoothstep(kEdge, 2.0 * kEdge, max(sx.edge, sy.edge));
+  // Silhouettes: the range of h over 2, 4 and 6 texels in 8 directions.
+  var lo = height_at(p);
+  var hi = lo;
+  for (var d = 2; d <= kSilhouetteRadius; d += 2) {
+    for (var dy = -1; dy <= 1; dy++) {
+      for (var dx = -1; dx <= 1; dx++) {
+        if (dx == 0 && dy == 0) {
+          continue;
+        }
+        let v = height_at(p + vec2i(d * dx, d * dy));
+        lo = min(lo, v);
+        hi = max(hi, v);
+      }
+    }
+  }
+  let wide = 1.0 - smoothstep(kSilhouette, 2.0 * kSilhouette, hi - lo);
+  let conf = min(local, wide);
   return vec4f(gx, gy, c, conf);
 }
 

@@ -153,7 +153,23 @@ std::vector<FieldTexel> BuildDepthField(const float* depth, std::uint32_t width,
       t.sx = std::clamp(sx / x_unit, -kMaxSlope, kMaxSlope);
       t.sy = std::clamp(sy / y_unit, -kMaxSlope, kMaxSlope);
       t.h = c;
-      t.conf = 1.0f - Smoothstep(kEdgeThreshold, 2.0f * kEdgeThreshold, std::max(edge_x, edge_y));
+      const float local = 1.0f - Smoothstep(kEdgeThreshold, 2.0f * kEdgeThreshold, std::max(edge_x, edge_y));
+      float lo = at(height_map, x, y, w);
+      float hi = lo;
+      for (int d = 2; d <= kSilhouetteRadius; d += 2) {
+        for (int dy = -1; dy <= 1; ++dy) {
+          for (int dx = -1; dx <= 1; ++dx) {
+            if (dx == 0 && dy == 0) {
+              continue;
+            }
+            const float v = at(height_map, std::clamp(x + d * dx, 0, w - 1), std::clamp(y + d * dy, 0, h - 1), w);
+            lo = std::min(lo, v);
+            hi = std::max(hi, v);
+          }
+        }
+      }
+      const float wide = 1.0f - Smoothstep(kSilhouetteThreshold, 2.0f * kSilhouetteThreshold, hi - lo);
+      t.conf = std::min(local, wide);
     }
   }
   return field;

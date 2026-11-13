@@ -87,6 +87,13 @@ inline constexpr float kMaxGain = 1.8f;         // never neon highlights
 inline constexpr int kBilateralRadius = 2;             // 5x5
 inline constexpr float kBilateralSigmaSpatial = 1.5f;  // texels
 inline constexpr float kEdgeThreshold = 0.06f;         // |dh| over kGradientStep texels: a discontinuity
+// Silhouettes: the range of h (before smoothing) over 24 samples at 2, 4 and
+// 6 texels in 8 directions. A range above kSilhouetteThreshold fades the
+// confidence out (fully at twice it), so normals ease to camera-facing within
+// about 6 texels of a depth jump and a lagging outline gives no hard step in
+// the lighting (open issue 1). The face's own relief stays well below it.
+inline constexpr int kSilhouetteRadius = 6;
+inline constexpr float kSilhouetteThreshold = 0.12f;
 inline constexpr float kBilateralSigmaRange = kEdgeThreshold;
 inline constexpr int kGradientStep = 2;                // texels: coarse-scale shape, not fine noise
 inline constexpr float kMaxGradient = 3.0f;            // |dz/dx|, |dz/dy| clamp (lighting units)
