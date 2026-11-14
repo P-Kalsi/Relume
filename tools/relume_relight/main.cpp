@@ -111,10 +111,12 @@ Grid Lerp(const Grid& a, const Grid& b, float t) {
 }
 
 float g_depth_falloff = 1.0f;  // --depth-falloff
+float g_relief = LightSettings{}.relief;  // relief 0 isolates the shape term (diagnostics)
 
 Gains Shade(const Grid& grid, float fade) {
   LightSettings light;  // the default light
   light.depth_falloff = g_depth_falloff;
+  light.relief = g_relief;
   Gains gains(grid.size());
   for (std::uint32_t gy = 0; gy < kGridH; ++gy) {
     for (std::uint32_t gx = 0; gx < kGridW; ++gx) {
@@ -290,6 +292,94 @@ double SharpestStep(const Gains& g) {
     }
   }
   return worst;
+}
+
+// Open issue 2: how much the subject's surface tilts. Over confident texels
+// of the near region (normalized h above 0.6), the 50th and 90th percentile
+// of the tilt angle atan(relief * |slope|) at the default relief. A face
+// tilted by only a few degrees can barely be shaped by the light.
+struct Tilt {
+  double p50_deg = 0.0;
+  double p90_deg = 0.0;
+  std::size_t texels = 0;
+};
+
+Tilt SubjectTilt(const std::vector<Tensor>& results) {
+  std::vector<double> angles;
+  std::vector<float> scratch;
+  Tensor stable(kNetDepthFloats);
+  DepthStabilizer stabilizer;
+  const float relief = LightSettings{}.relief;
+  for (const Tensor& raw : results) {
+    const DisplayRange range = ComputeDisplayRange(raw.data(), kTransform, scratch);
+    stabilizer.Process(raw.data(), kTransform, range.lo, range.hi, range.valid, 1, stable.data());
+    const std::vector<FieldTexel> field =
+        BuildDepthField(stable.data(), kTransform.new_w, kTransform.new_h, kNetSize, 1.0f, 0.0f, kAspect);
+    for (const FieldTexel& t : field) {
+      if (t.h > 0.6f && t.conf >= 0.99f) {
+        const double g = std::min(static_cast<double>(kMaxGradient),
+                                  relief * std::sqrt(static_cast<double>(t.sx * t.sx + t.sy * t.sy)));
+        angles.push_back(std::atan(g) * 180.0 / 3.14159265358979);
+      }
+    }
+  }
+  Tilt tilt;
+  tilt.texels = angles.size();
+  if (!angles.empty()) {
+    std::sort(angles.begin(), angles.end());
+    tilt.p50_deg = angles[angles.size() / 2];
+    tilt.p90_deg = angles[angles.size() * 9 / 10];
+  }
+  return tilt;
+}
+
+// Open issue 2: where the light's effect goes. For the last result of a
+// sequence, at the default light: the mean gain on the subject (h > 0.6)
+// minus the background (h < 0.4) is the subject-vs-background separation,
+// and the spread (standard deviation) of the gain within the subject is the
+// face-shaped part.
+struct GainSplit {
+  double separation = 0.0;
+  double shape = 0.0;
+};
+
+GainSplit SplitGain(const std::vector<Tensor>& results, float falloff, float relief = LightSettings{}.relief) {
+  std::vector<float> scratch;
+  Tensor stable(kNetDepthFloats);
+  DepthStabilizer stabilizer;
+  for (const Tensor& raw : results) {
+    const DisplayRange range = ComputeDisplayRange(raw.data(), kTransform, scratch);
+    stabilizer.Process(raw.data(), kTransform, range.lo, range.hi, range.valid, 1, stable.data());
+  }
+  const std::vector<FieldTexel> field =
+      BuildDepthField(stable.data(), kTransform.new_w, kTransform.new_h, kNetSize, 1.0f, 0.0f, kAspect);
+  const Grid grid = SampleGrid(field, kTransform.new_w, kTransform.new_h);
+  const float saved = g_depth_falloff;
+  const float saved_relief = g_relief;
+  g_depth_falloff = falloff;
+  g_relief = relief;
+  const Gains gains = Shade(grid, 1.0f);
+  g_depth_falloff = saved;
+  g_relief = saved_relief;
+  double sub = 0.0, sub2 = 0.0, bg = 0.0;
+  std::size_t n_sub = 0, n_bg = 0;
+  for (std::size_t i = 0; i < gains.size(); ++i) {
+    if (grid[i].h > 0.6f) {
+      sub += gains[i];
+      sub2 += static_cast<double>(gains[i]) * gains[i];
+      ++n_sub;
+    } else if (grid[i].h < 0.4f) {
+      bg += gains[i];
+      ++n_bg;
+    }
+  }
+  GainSplit split;
+  if (n_sub > 1 && n_bg > 0) {
+    const double mean = sub / static_cast<double>(n_sub);
+    split.separation = mean - bg / static_cast<double>(n_bg);
+    split.shape = std::sqrt(std::max(0.0, sub2 / static_cast<double>(n_sub) - mean * mean));
+  }
+  return split;
 }
 
 // --- Scenes ---
@@ -582,6 +672,26 @@ int main(int argc, char** argv) {
     }
   }
   std::printf("Thresholds: F <= max(0.5 x F(none), eps), S <= 1.5, R <= 6 frames, G = 0 (bursts: F and S)\n");
+  const auto print_tilt = [](const char* name, const Tilt& t) {
+    std::printf("Subject tilt (%s, relief %.2f): p50 %.1f deg, p90 %.1f deg over %zu texels\n", name,
+                static_cast<double>(LightSettings{}.relief), t.p50_deg, t.p90_deg, t.texels);
+  };
+  print_tilt("synthetic person", SubjectTilt(still));
+  for (const auto& [name, results] : burst_scenes) {
+    print_tilt(name.c_str(), SubjectTilt(results));
+  }
+  const auto print_split = [](const char* name, const std::vector<Tensor>& results) {
+    const GainSplit on = SplitGain(results, 1.0f);
+    const GainSplit off = SplitGain(results, 0.0f);
+    const GainSplit flat = SplitGain(results, 1.0f, 0.0f);
+    std::printf("Gain split (%s, default light): subject-vs-background %.3f, within-subject spread %.3f "
+                "(depth falloff 1) | %.3f, %.3f (falloff 0) | flat (relief 0): spread %.3f\n",
+                name, on.separation, on.shape, off.separation, off.shape, flat.shape);
+  };
+  print_split("synthetic person", still);
+  for (const auto& [name, results] : burst_scenes) {
+    print_split(name.c_str(), results);
+  }
   std::printf("Simplest passing configuration: %s\n", best.empty() ? "NONE (trade-off: see the table)" : best.c_str());
   if (json != nullptr) {
     std::fprintf(json, "  ],\n  \"simplest_passing\": \"%s\"\n}\n", best.c_str());
