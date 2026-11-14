@@ -88,6 +88,26 @@ Not yet done: Sections 3-8.
   screen-space blur of the gain across silhouettes or motion compensation
   (Phase 5).
 
+### Open issue 2: measurements (2026-11-13)
+From `relume_relight` on the two local bursts (numbers only):
+- **The face is not flat in the depth.** Surface tilt over the subject at the
+  default relief: p50 17-18 deg, p90 29-34 deg (the synthetic person: 6 deg).
+- **The lighting is dominated by a position gradient, not by shape.** At the
+  default light, the subject-vs-background difference is small (0.018-0.030
+  gain). The spread within the subject is 0.091-0.097, and with relief 0 (no
+  shape at all) it is still 0.086-0.088. The shape term adds only about 5-10%;
+  estimated separately, about 0.035 against 0.087 for the position term.
+- **Conclusion:** "brightness over the face area" comes mostly from the
+  light's distance and angle varying across the image, not from too little
+  depth relief.
+- **Candidate fixes (to choose with the developer):**
+  - a more distant, directional key light (weaker attenuation and position
+    dependence; Z 4.0 already approximates this);
+  - less wrap in the Lambert term, for more shape contrast;
+  - a relief gain targeted at the subject.
+
+  Each is measurable with this split before a camera check.
+
 Live numbers (session 1, stats intervals after Ready):
 - capture and composed 30.0 fps; pool drops 0; render loop p95 17.1 ms, max 18.1 ms;
 - depth 6.3-6.5 results/s, age p50 182 ms, lag p50 5 frames;
